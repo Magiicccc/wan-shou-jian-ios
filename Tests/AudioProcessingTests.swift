@@ -131,20 +131,37 @@ final class AudioProcessingTests: XCTestCase {
         XCTAssertTrue(sawBeat)
     }
 
-    func testStagePaletteUsesSilverIceVioletAndChampagneGold() {
-        XCTAssertEqual(LightStage.idle.palette, LightRGB(red: 178, green: 194, blue: 214))
-        XCTAssertEqual(LightStage.melody.palette, LightRGB(red: 148, green: 207, blue: 255))
-        XCTAssertEqual(LightStage.rhythm.palette, LightRGB(red: 164, green: 143, blue: 255))
-        XCTAssertEqual(LightStage.climax.palette, LightRGB(red: 255, green: 211, blue: 142))
-        XCTAssertEqual(LightStage.decay.palette, LightRGB(red: 150, green: 177, blue: 215))
+    func testStagePaletteUsesDistinctSaturatedLEDColors() {
+        XCTAssertEqual(LightStage.idle.palette, LightRGB(red: 12, green: 65, blue: 214))
+        XCTAssertEqual(LightStage.melody.palette, LightRGB(red: 12, green: 112, blue: 255))
+        XCTAssertEqual(LightStage.rhythm.palette, LightRGB(red: 150, green: 16, blue: 255))
+        XCTAssertEqual(LightStage.climax.palette, LightRGB(red: 255, green: 120, blue: 8))
+        XCTAssertEqual(LightStage.decay.palette, LightRGB(red: 16, green: 78, blue: 215))
         var engine = LightEffectEngine()
         let high = AudioFeatures(fastEnergy: 0.9, slowEnergy: 0.9, calibrationProgress: 1, hasSound: true)
         var light = LightState.idle
         for _ in 0..<160 { light = engine.update(high, duration: 0.05) }
         XCTAssertEqual(light.stage, .climax)
         let scale = Double(light.color.red) / 255
-        XCTAssertEqual(Double(light.color.green), 211 * scale, accuracy: 1)
-        XCTAssertEqual(Double(light.color.blue), 142 * scale, accuracy: 1)
+        XCTAssertEqual(Double(light.color.green), 120 * scale, accuracy: 1)
+        XCTAssertEqual(Double(light.color.blue), 8 * scale, accuracy: 1)
+    }
+
+    func testRiseFromBlackPreservesMelodyHueAtEveryBrightness() {
+        let feature = AudioFeatures(fastEnergy: 0.6, slowEnergy: 0.6,
+                                    calibrationProgress: 1, hasSound: true)
+        for brightness in [0.15, 0.55, 1.0] {
+            var engine = LightEffectEngine()
+            _ = engine.update(AudioFeatures(), duration: 0.05)
+            for _ in 0..<40 {
+                let light = engine.update(feature, duration: 0.05, brightnessLimit: brightness)
+                XCTAssertEqual(light.stage, .melody)
+                let scale = Double(light.color.blue) / 255
+                XCTAssertEqual(Double(light.color.red), 12 * scale, accuracy: 1)
+                XCTAssertEqual(Double(light.color.green), 112 * scale, accuracy: 1)
+                XCTAssertGreaterThan(light.color.blue, light.color.red)
+            }
+        }
     }
 
     func testSteadyMelodyBreathesWithBoundedSlopeAndIndependentBrightnessCap() {

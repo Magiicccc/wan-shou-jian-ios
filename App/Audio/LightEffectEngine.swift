@@ -6,12 +6,12 @@ enum LightStage: String, CaseIterable {
 
     var palette: LightRGB {
         switch self {
-        case .idle: return LightRGB(red: 178, green: 194, blue: 214)
-        case .calibrating: return LightRGB(red: 176, green: 201, blue: 234)
-        case .melody: return LightRGB(red: 148, green: 207, blue: 255)
-        case .rhythm: return LightRGB(red: 164, green: 143, blue: 255)
-        case .climax: return LightRGB(red: 255, green: 211, blue: 142)
-        case .decay: return LightRGB(red: 150, green: 177, blue: 215)
+        case .idle: return LightRGB(red: 12, green: 65, blue: 214)
+        case .calibrating: return LightRGB(red: 24, green: 112, blue: 234)
+        case .melody: return LightRGB(red: 12, green: 112, blue: 255)
+        case .rhythm: return LightRGB(red: 150, green: 16, blue: 255)
+        case .climax: return LightRGB(red: 255, green: 120, blue: 8)
+        case .decay: return LightRGB(red: 16, green: 78, blue: 215)
         }
     }
 
@@ -96,10 +96,13 @@ struct LightEffectEngine {
         let speed = targetLevel > level ? (antiFlash ? 0.7 : 1.5) : 0.9
         level += min(speed * dt, max(-speed * dt, targetLevel - level))
         level = min(level, limit)
+        let deltas = (0..<3).map { palette[$0] * level - colorChannels[$0] }
+        let largestDelta = deltas.map { abs($0) }.max() ?? 0
+        let step = (antiFlash ? 110.0 : 260.0) * dt
+        // A shared interpolation fraction preserves RGB ratios when rising from black.
+        let fraction = largestDelta > 0 ? min(1, step / largestDelta) : 1
         for index in 0..<3 {
-            let target = palette[index] * level
-            let step = (antiFlash ? 110.0 : 260.0) * dt
-            colorChannels[index] += min(step, max(-step, target - colorChannels[index]))
+            colorChannels[index] += deltas[index] * fraction
             colorChannels[index] = min(colorChannels[index], 255 * limit)
         }
         if calibrating || limit == 0 { colorChannels = [0, 0, 0] }
