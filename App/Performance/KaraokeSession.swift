@@ -54,6 +54,7 @@ final class KaraokeSession: ObservableObject {
     private var assetURL: URL?
     private var importGeneration = 0
     private var color = [0.0,0.0,0.0]
+    private var audioActive=false
     private struct SavedSong: Codable { var file:String;var title:String;var cues:[LyricCue] }
     private var songDirectory:URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Songs") }
     var currentCue: LyricCue? { PerformanceScore.cue(at: position, in: cues) }
@@ -160,6 +161,7 @@ final class KaraokeSession: ObservableObject {
                     let audio=AVAudioSession.sharedInstance()
                     try audio.setCategory(granted ? .playAndRecord : .playback,mode:.default,options:granted ? [.defaultToSpeaker,.mixWithOthers] : [.mixWithOthers])
                     try audio.setActive(true)
+                    audioActive=true
                     if granted { try startMicrophone(token:token) }
                     manager.setBackgroundRhythmEnabled(true)
                 }
@@ -205,10 +207,11 @@ final class KaraokeSession: ObservableObject {
     }
 
     func pause() {
-        let wasActive=playing || engine != nil
+        let wasActive=playing || engine != nil || audioActive
         generation += 1;playing=false;hasMicrophone=false;timer?.cancel();timer=nil
         player?.pause();engine?.inputNode.removeTap(onBus:0);engine?.stop();engine=nil;probe=nil;reverb=nil
         if !preview && wasActive { manager.endRhythm(sendBlack:true);try? AVAudioSession.sharedInstance().setActive(false,options:.notifyOthersOnDeactivation) }
+        audioActive=false
     }
 
     func finish() { pause();report=VocalMetrics.report(frames);status="演唱已结束，复盘已更新。" }

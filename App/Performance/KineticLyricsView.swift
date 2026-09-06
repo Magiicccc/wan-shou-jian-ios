@@ -13,7 +13,7 @@ struct KineticLyricsView: View {
                 let accent=Atmosphere.color(cue.mood.rgb)
                 let emphasis=cue.emphasis
                 let parts=cue.text.components(separatedBy:emphasis)
-                let side=min(geometry.size.width,430)
+                let side=min(geometry.size.width,430,geometry.size.height*1.55)
                 ZStack {
                     if cue.scene == .echo {
                         ForEach(1..<3,id:\.self) { index in
@@ -25,20 +25,21 @@ struct KineticLyricsView: View {
                     VStack(spacing:12) {
                         if cue.scene == .confrontation || cue.scene == .rising {
                             HStack(alignment:.center,spacing:18) {
-                                Text(parts.first ?? "").font(Atmosphere.title(side*0.065)).foregroundStyle(Atmosphere.muted)
+                                Text(parts.first ?? "").font(Atmosphere.title(side*0.065)).foregroundStyle(Atmosphere.muted).lineLimit(3).minimumScaleFactor(0.6)
                                 Text(emphasis.map(String.init).joined(separator:"\n"))
                                     .font(Atmosphere.title(min(62,side*0.15,(geometry.size.height-20)/CGFloat(max(1,emphasis.count))/1.4))).lineSpacing(0).foregroundStyle(accent)
                                     .scaleEffect(reduced ? 1 : 1+energy*0.045)
-                                Text(parts.dropFirst().joined(separator:emphasis)).font(Atmosphere.title(side*0.065)).foregroundStyle(Atmosphere.muted)
+                                Text(parts.dropFirst().joined(separator:emphasis)).font(Atmosphere.title(side*0.065)).foregroundStyle(Atmosphere.muted).lineLimit(3).minimumScaleFactor(0.6)
                             }
                         } else {
-                            Text(parts.first ?? "").font(Atmosphere.title(side*0.065)).tracking(5).foregroundStyle(Atmosphere.muted)
+                            Text(parts.first ?? "").font(Atmosphere.title(side*0.065)).tracking(5).foregroundStyle(Atmosphere.muted).lineLimit(2).minimumScaleFactor(0.6)
                             Text(emphasis).font(Atmosphere.title(side*(cue.scene == .climax ? 0.19 : 0.145)))
                                 .tracking(cue.scene == .intimate ? 10 : 3)
+                                .lineLimit(1).minimumScaleFactor(0.5)
                                 .foregroundStyle(accent)
                                 .scaleEffect(reduced ? 1 : 1+energy*0.04)
                                 .shadow(color:accent.opacity(0.18),radius:12)
-                            if let last=parts.last,!last.isEmpty,parts.count>1 { Text(last).font(Atmosphere.title(side*0.062)).tracking(4).foregroundStyle(Atmosphere.silver) }
+                            if let last=parts.last,!last.isEmpty,parts.count>1 { Text(last).font(Atmosphere.title(side*0.062)).tracking(4).foregroundStyle(Atmosphere.silver).lineLimit(2).minimumScaleFactor(0.6) }
                         }
                     }
                     .rotationEffect(.degrees(reduced ? 0 : cue.scene == .confrontation ? -3 : 0))
