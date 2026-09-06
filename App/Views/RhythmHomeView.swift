@@ -217,7 +217,7 @@ struct RhythmHomeView: View {
                             }
                             Spacer()
                             Image(systemName: "chevron.right")
-                        }.frame(minHeight: 58)
+                        }.frame(minHeight: 58).contentShape(Rectangle())
                     }.disabled(manager.phase == .ready || manager.phase == .connecting || manager.phase == .initializing || manager.phase == .disconnecting)
                 }
                 Button { session.stop(); manual = true } label: {
@@ -225,7 +225,7 @@ struct RhythmHomeView: View {
                         Label("手动试灯", systemImage: "sun.max")
                         Spacer()
                         Image(systemName: "chevron.right").font(.caption)
-                    }.frame(minHeight: 52)
+                    }.frame(minHeight: 52).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("open-manual")
                 Text("先让官方小程序和 LightBlue 释放连接，再将宝宝剑设为白光闪烁。首次试灯可依次确认红、绿、蓝与明暗变化。")
                     .font(.footnote).foregroundStyle(Atmosphere.muted).lineSpacing(5)
