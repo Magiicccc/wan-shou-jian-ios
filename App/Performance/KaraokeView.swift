@@ -8,6 +8,7 @@ struct KaraokeView: View {
     @State private var console=false
     @State private var ai=false
     @State private var showingReport=false
+    @State private var menu=false
     @State private var controls=true
     @State private var lastTouch=Date()
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -16,11 +17,11 @@ struct KaraokeView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 VStack(spacing:0) {
-                    header.padding(.horizontal,24).padding(.top,12)
+                    header.padding(.horizontal,24).padding(.top,12).zIndex(2)
                     FoxStageView(light:session.light,time:session.position,active:session.playing)
-                        .frame(height:g.size.height*0.44)
+                        .frame(height:max(140,(g.size.height-225)*0.56)).clipped().allowsHitTesting(false)
                     KineticLyricsView(cue:session.currentCue,time:session.position,energy:session.energy)
-                        .frame(height:g.size.height*0.28).padding(.horizontal,28)
+                        .frame(height:max(100,(g.size.height-225)*0.44)).padding(.horizontal,28).clipped().allowsHitTesting(false)
                     Spacer(minLength:4)
                     if controls || !session.playing || voiceOver { transport.padding(.horizontal,24).transition(.opacity) }
                 }
@@ -41,6 +42,14 @@ struct KaraokeView: View {
         .sheet(isPresented:$console) { mixingConsole.presentationDetents([.medium,.large]) }
         .sheet(isPresented:$ai) { DirectorSettingsView() }
         .sheet(isPresented:$showingReport) { reportSheet }
+        .confirmationDialog("舞台菜单",isPresented:$menu,titleVisibility:.visible) {
+            Button("导入音频") { lyricsImport=false;importer=true }
+            Button("导入 LRC 歌词") { lyricsImport=true;importer=true }
+            Button("原创演示") { session.useDemo() }
+            Button("AI 接口设置") { ai=true }
+            Button("AI 编排本曲") { Task { await session.direct(using:client) } }
+            Button("演唱复盘") { showingReport=true }
+        }
     }
 
     private var header:some View {
@@ -50,14 +59,7 @@ struct KaraokeView: View {
                 Text(session.title).font(Atmosphere.title(21)).lineLimit(1)
             }
             Spacer()
-            Menu {
-                Button("导入音频",systemImage:"music.note") { lyricsImport=false;importer=true }
-                Button("导入 LRC 歌词",systemImage:"text.alignleft") { lyricsImport=true;importer=true }
-                Button("原创演示",systemImage:"sparkles") { session.useDemo() }
-                Button("AI 接口设置",systemImage:"slider.horizontal.3") { ai=true }
-                Button("AI 编排本曲",systemImage:"wand.and.stars") { Task { await session.direct(using:client) } }
-                Button("演唱复盘",systemImage:"waveform.path") { showingReport=true }
-            } label: { Image(systemName:"ellipsis").frame(width:44,height:44) }
+            Button { menu=true } label: { Image(systemName:"ellipsis").frame(width:44,height:44).contentShape(Rectangle()) }
             .accessibilityLabel("舞台菜单").accessibilityIdentifier("stage-menu")
         }
     }

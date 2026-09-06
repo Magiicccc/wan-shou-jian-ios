@@ -64,6 +64,24 @@ class ConfigureIPATests(unittest.TestCase):
     def source_hash(self):
         return hashlib.sha256(self.source.read_bytes()).digest()
 
+    def test_optional_model_is_preserved(self):
+        self.make_ipa()
+        model = self.folder / "fox.usdz"
+        with zipfile.ZipFile(model, "w") as archive:
+            archive.writestr("fox.usda", "#usda 1.0\n")
+        configure.configure_ipa(self.source, self.output, SYNTHETIC_HASH, model_path=model)
+        with zipfile.ZipFile(self.output) as archive:
+            self.assertEqual(archive.read(configure.VISUAL_ASSET_ROOT + "fox.usdz"), model.read_bytes())
+
+    def test_model_rejects_parent_traversal(self):
+        self.make_ipa()
+        model = self.folder / "fox.usdz"
+        with zipfile.ZipFile(model, "w") as archive:
+            archive.writestr("../fox.usda", "#usda 1.0\n")
+        with self.assertRaises(configure.ConfigurationError):
+            configure.configure_ipa(self.source, self.output, SYNTHETIC_HASH, model_path=model)
+        self.assertFalse(self.output.exists())
+
     def make_visuals(self):
         folder = self.folder / "private-images"
         folder.mkdir(exist_ok=True)

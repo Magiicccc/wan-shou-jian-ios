@@ -108,7 +108,7 @@ def visual_assets(directory):
     return result
 
 
-def configure_ipa(input_path, output_path, mac_sha256, visual_assets_path=None):
+def configure_ipa(input_path, output_path, mac_sha256, visual_assets_path=None, model_path=None):
     device_hash = validate_hash(mac_sha256)
     created_identity = None
     output = None
@@ -126,6 +126,17 @@ def configure_ipa(input_path, output_path, mac_sha256, visual_assets_path=None):
             raise ConfigurationError("请先创建输出文件的父目录。")
 
         private_images = visual_assets(visual_assets_path)
+        if model_path is not None:
+            model = Path(model_path).resolve(strict=True)
+            if not model.is_file() or model.stat().st_size > 64 * 1024 * 1024:
+                raise ConfigurationError("USDZ 模型须为 64 MiB 以内的文件。")
+            with zipfile.ZipFile(model) as asset:
+                names = asset.namelist()
+                if asset.testzip() is not None or not any(name.endswith((".usd", ".usda", ".usdc")) for name in names):
+                    raise ConfigurationError("USDZ 模型结构校验失败。")
+                if any(name.startswith(("/", "\\")) or ".." in name.replace("\\", "/").split("/") for name in names):
+                    raise ConfigurationError("USDZ 模型包含异常资源路径。")
+            private_images[VISUAL_ASSET_ROOT + "fox.usdz"] = model.read_bytes()
         with zipfile.ZipFile(source, "r") as original:
             replacement = updated_plist(original, device_hash)
             reserved = {name.casefold() for name in private_images}
@@ -180,10 +191,11 @@ def main(argv=None):
     parser.add_argument("--output", required=True, help="新的输出 IPA，父目录须已存在")
     parser.add_argument("--mac-sha256", help="64 位 ASCII 十六进制摘要；省略时读取 LIGHTSTICK_MAC_SHA256")
     parser.add_argument("--visual-assets", help="可选私有素材文件夹，读取 fox-open.png 与 fox-closed.png")
+    parser.add_argument("--model", help="可选私有 USDZ 狐狸模型")
     arguments = parser.parse_args(argv)
     digest = arguments.mac_sha256 if arguments.mac_sha256 is not None else os.environ.get("LIGHTSTICK_MAC_SHA256", "")
     try:
-        output = configure_ipa(arguments.input, arguments.output, digest, arguments.visual_assets)
+        output = configure_ipa(arguments.input, arguments.output, digest, arguments.visual_assets, arguments.model)
     except ConfigurationError as error:
         print(str(error), file=sys.stderr)
         return 2

@@ -54,16 +54,30 @@ final class KaraokeSession: ObservableObject {
     private var assetURL: URL?
     private var importGeneration = 0
     private var color = [0.0,0.0,0.0]
+    private struct SavedSong: Codable { var file:String;var title:String;var cues:[LyricCue] }
+    private var songDirectory:URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Songs") }
     var currentCue: LyricCue? { PerformanceScore.cue(at: position, in: cues) }
     var evidence: [VocalFrame] { frames.enumerated().filter { $0.offset.isMultiple(of: max(1,frames.count/100)) }.map(\.element) }
 
     init(manager: LightstickManager, preview: Bool = false) {
         self.manager=manager;self.preview=preview
         if let url=Bundle.main.url(forResource:"NightVoyage",withExtension:"wav") { load(url, title: PerformanceScore.demoTitle) }
+        if !preview,let data=UserDefaults.standard.data(forKey:"stage.song"),
+           let saved=try? JSONDecoder().decode(SavedSong.self,from:data),
+           saved.file == URL(fileURLWithPath:saved.file).lastPathComponent,
+           load(songDirectory.appendingPathComponent(saved.file),title:saved.title) {
+            cues=saved.cues;status="已恢复上次的歌曲与分镜。"
+        }
         for name in [AVAudioSession.interruptionNotification, AVAudioSession.routeChangeNotification, AVAudioSession.mediaServicesWereResetNotification] {
             observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] notification in
-                let shouldPause = name != AVAudioSession.interruptionNotification ||
-                    (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
+                let reason=notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                let shouldPause:Bool
+                if name == AVAudioSession.routeChangeNotification {
+                    shouldPause = reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue || reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue
+                } else {
+                    shouldPause = name != AVAudioSession.interruptionNotification ||
+                        (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
+                }
                 if shouldPause { Task { @MainActor [weak self] in self?.pause(); self?.status="音频环境已变化，点击播放继续。" } }
             })
         }
@@ -71,11 +85,11 @@ final class KaraokeSession: ObservableObject {
 
     deinit { timer?.cancel(); for observer in observers { NotificationCenter.default.removeObserver(observer) } }
 
-    func load(_ url: URL, title: String) {
+    @discardableResult func load(_ url: URL, title: String) -> Bool {
         pause();importGeneration += 1
         do {
             let p=try AVAudioPlayer(contentsOf:url)
-            guard p.duration > 0, p.duration <= 1200 else { status="请选择二十分钟以内的音频。";return }
+            guard p.duration > 0, p.duration <= 1200 else { status="请选择二十分钟以内的音频。";return false }
             p.prepareToPlay();p.volume=Float(accompanimentVolume)
             self.player=p;self.assetURL=url;self.title=title;duration=p.duration;position=0;frames=[];bins=[]
             let token=importGeneration
@@ -97,7 +111,8 @@ final class KaraokeSession: ObservableObject {
                 }.value
                 if self.importGeneration == token { self.bins=result }
             }
-        } catch { status="音频读取失败，请换一个 MP3、M4A 或 WAV 文件。" }
+            return true
+        } catch { status="音频读取失败，请换一个 MP3、M4A 或 WAV 文件。";return false }
     }
 
     func importAudio(_ url: URL) {
@@ -105,12 +120,14 @@ final class KaraokeSession: ObservableObject {
         do {
             let size=try url.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0
             guard size <= 200_000_000 else { status="请选择 200 MB 以内的音频。";return }
-            let directory=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Songs")
+            let directory=songDirectory
             try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
             let copy=directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension)
             try FileManager.default.copyItem(at:url,to:copy)
-            load(copy,title:url.deletingPathExtension().lastPathComponent)
-            cues=[];status="音频已导入，请添加对应 LRC 歌词。"
+            let previous=assetURL
+            guard load(copy,title:url.deletingPathExtension().lastPathComponent) else { try? FileManager.default.removeItem(at:copy);return }
+            cues=[];saveSong();status="音频已导入，请添加对应 LRC 歌词。"
+            if let previous,previous.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL { try? FileManager.default.removeItem(at:previous) }
         } catch { status="导入失败，请在文件 App 中下载完整音频后重试。" }
     }
 
@@ -120,6 +137,7 @@ final class KaraokeSession: ObservableObject {
             let size=try url.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0
             guard size<=512_000 else { throw ScoreError.invalidLyrics }
             cues=try PerformanceScore.parseLRC(String(contentsOf:url,encoding:.utf8),duration:duration)
+            saveSong()
             status="歌词已导入 · 句级动态编排"
         } catch { status=error.localizedDescription }
     }
@@ -127,6 +145,7 @@ final class KaraokeSession: ObservableObject {
     func useDemo() {
         guard let url=Bundle.main.url(forResource:"NightVoyage",withExtension:"wav") else { status="演示音频资源缺失。";return }
         load(url,title:PerformanceScore.demoTitle);cues=PerformanceScore.demo;status="原创器乐与歌词演示 · 句级编排"
+        if !preview { UserDefaults.standard.removeObject(forKey:"stage.song") }
     }
 
     func start(record: Bool = true) {
@@ -181,7 +200,8 @@ final class KaraokeSession: ObservableObject {
             }
         }
         engine.inputNode.installTap(onBus:0,bufferSize:2048,format:format) { buffer,_ in probe.offer(buffer,time:0) }
-        engine.prepare();try engine.start();self.engine=engine;self.reverb=reverb;self.probe=probe
+        self.engine=engine;self.reverb=reverb;self.probe=probe
+        engine.prepare();try engine.start()
     }
 
     func pause() {
@@ -220,12 +240,17 @@ final class KaraokeSession: ObservableObject {
         do {
             let plan=try await client.plan(cues:original)
             guard token==importGeneration,cues==original else { return }
-            cues=try PerformanceScore.apply(plan,to:original);status="AI 情绪与歌词分镜已应用。"
+            cues=try PerformanceScore.apply(plan,to:original);saveSong();status="AI 情绪与歌词分镜已应用。"
         } catch { status=error.localizedDescription }
     }
 
     func review(using client: DirectorClient) async {
         guard !analyzing,!frames.isEmpty else { return };analyzing=true;defer { analyzing=false }
         do { report=try await client.review(frames:evidence) } catch { report=VocalMetrics.report(frames)+"\n\n"+error.localizedDescription }
+    }
+    private func saveSong() {
+        guard !preview,let assetURL,assetURL.deletingLastPathComponent().standardizedFileURL == songDirectory.standardizedFileURL,
+              let data=try? JSONEncoder().encode(SavedSong(file:assetURL.lastPathComponent,title:title,cues:cues)) else { return }
+        UserDefaults.standard.set(data,forKey:"stage.song")
     }
 }

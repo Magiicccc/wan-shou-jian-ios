@@ -1,6 +1,7 @@
 import RealityKit
 import SwiftUI
 import UIKit
+import Combine
 
 struct FoxStageView: View {
     var light: LightState
@@ -59,10 +60,10 @@ private struct FoxRealityView: UIViewRepresentable {
         let fill=DirectionalLight();fill.light.intensity=550;fill.light.color=UIColor(red:0.55,green:0.66,blue:1,alpha:1)
         fill.look(at:[0,0,0],from:[2,1,-2],relativeTo:nil);anchor.addChild(fill)
         view.scene.addAnchor(anchor)
-        context.coordinator.load=Task { @MainActor in
-            do {
-                let entity=try Entity.load(contentsOf:url)
-                guard !Task.isCancelled else { return }
+        context.coordinator.load=Entity.loadAsync(contentsOf:url).receive(on:DispatchQueue.main).sink(
+            receiveCompletion: { result in
+                if case .failure = result { view.accessibilityLabel="三维模型加载失败" }
+            }, receiveValue: { entity in
                 let bounds=entity.visualBounds(relativeTo:nil)
                 let dimension=max(bounds.extents.x,max(bounds.extents.y,bounds.extents.z))
                 let pivot=Entity()
@@ -70,8 +71,8 @@ private struct FoxRealityView: UIViewRepresentable {
                 entity.scale *= scale;entity.position = -bounds.center*scale
                 pivot.addChild(entity);anchor.addChild(pivot)
                 context.coordinator.pivot=pivot;context.coordinator.model=entity
-            } catch { view.accessibilityLabel="三维模型加载失败" }
-        }
+                context.coordinator.setBlink(true)
+            })
         return view
     }
     func updateUIView(_ view:ARView,context:Context) {
@@ -80,14 +81,19 @@ private struct FoxRealityView: UIViewRepresentable {
         pivot.orientation=simd_quatf(angle:Float(sin(time*0.48))*amplitude,axis:[0,1,0]) * simd_quatf(angle:Float(sin(time*0.7))*amplitude*0.25,axis:[1,0,0])
         for label in ["L","R"] {
             model.findEntity(named:"Ear_"+label)?.orientation=simd_quatf(angle:Float(light.beat)*amplitude*(label == "L" ? 1 : -1),axis:[0,0,1])
-            let blink = !active || light.eyeOpening<0.25 || (motion && time.truncatingRemainder(dividingBy:5.7)>5.54)
-            model.findEntity(named:"Eyelid_"+label)?.isEnabled=blink
         }
+        context.coordinator.setBlink(!active || light.eyeOpening<0.25 || (motion && time.truncatingRemainder(dividingBy:5.7)>5.54))
     }
     static func dismantleUIView(_ view:ARView,coordinator:Coordinator) { coordinator.load?.cancel();view.scene.anchors.removeAll() }
     @MainActor final class Coordinator {
         var pivot:Entity?
         var model:Entity?
-        var load:Task<Void,Never>?
+        var load:AnyCancellable?
+        func setBlink(_ closed:Bool) {
+            for name in ["Head","DirectionalFur"] {
+                model?.findEntity(named:name)?.isEnabled = !closed
+                model?.findEntity(named:name+"Closed")?.isEnabled = closed
+            }
+        }
     }
 }
