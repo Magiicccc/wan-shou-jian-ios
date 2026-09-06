@@ -287,6 +287,7 @@ struct RhythmHomeView: View {
 struct RhythmAdjustments: View {
     @ObservedObject var session: RhythmSession
     let compact: Bool
+    var identifierPrefix = "rhythm"
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -301,11 +302,11 @@ struct RhythmAdjustments: View {
                     Spacer()
                     Text("\(Int(session.brightnessLimit * 100))%")
                         .font(.caption.monospacedDigit()).foregroundStyle(Atmosphere.ice)
-                        .accessibilityIdentifier("rhythm-brightness-value")
+                        .accessibilityIdentifier("\(identifierPrefix)-brightness-value")
                 }
                 Slider(value: $session.brightnessLimit, in: 0...1, step: 0.01)
                     .frame(minHeight: 36).tint(Atmosphere.ice)
-                    .accessibilityLabel("律动亮度上限").accessibilityIdentifier("rhythm-brightness")
+                    .accessibilityLabel("律动亮度上限").accessibilityIdentifier("\(identifierPrefix)-brightness")
             }
         }.foregroundStyle(Atmosphere.silver)
     }
@@ -325,7 +326,7 @@ struct RhythmAdjustments: View {
                 .overlay(Capsule().strokeBorder(.white.opacity(abs(session.intensity - value) < 0.1 ? 0.18 : 0), lineWidth: 0.7))
         }.buttonStyle(.plain)
             .accessibilityValue(abs(session.intensity - value) < 0.1 ? "已选择" : "")
-            .accessibilityIdentifier("intensity-\(title)")
+            .accessibilityIdentifier("\(identifierPrefix)-intensity-\(title)")
     }
 }
 
@@ -372,7 +373,7 @@ struct ImmersiveRhythmView: View {
                                     .font(.caption).multilineTextAlignment(.center)
                                     .foregroundStyle(Atmosphere.muted)
                             }
-                            RhythmAdjustments(session: session, compact: true)
+                            RhythmAdjustments(session: session, compact: true, identifierPrefix: "immersive")
                             HStack(spacing: 20) {
                                 Button { session.recalibrate(); showControls() } label: {
                                     Image(systemName: "waveform.badge.mic").frame(width: 48, height: 48)

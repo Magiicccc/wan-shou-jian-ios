@@ -74,7 +74,7 @@ final class ManualControlUITests: XCTestCase {
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["合成音乐预览"].exists)
         XCTAssertLessThan(app.staticTexts["immersive-stage"].frame.maxY,
-                          app.sliders["rhythm-brightness"].frame.minY)
+                          app.sliders["immersive-brightness"].frame.minY)
         attach(app, name: "05-immersive-preview")
         stop.tap()
         XCTAssertTrue(wake.waitForExistence(timeout: 5))
