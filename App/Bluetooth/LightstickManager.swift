@@ -66,6 +66,7 @@ struct LatestLightQueue {
     init(nextSequence: UInt32 = 1) { self.nextSequence = nextSequence }
     var hasPending: Bool { pending != nil }
     mutating func offer(_ color: LightRGB) { pending = color }
+    mutating func removePending() { pending = nil }
     mutating func reset() { self = LatestLightQueue() }
 
     func delay(at now: TimeInterval) -> TimeInterval {
@@ -130,8 +131,71 @@ struct LightstickResponseWindow {
     }
 }
 
+struct LightstickRhythmIntent: Codable {
+    private(set) var selectedID: UUID?
+    private(set) var selectedName = ""
+    private(set) var rhythmRequested = false
+    private(set) var backgroundEnabled = false
+    private(set) var startedAt: Date?
+    private(set) var retryAttempt = 0
+    private(set) var generation: UInt64 = 0
+    static let restorationLifetime: TimeInterval = 6 * 60 * 60
+
+    var keepsBackgroundConnection: Bool { rhythmRequested && backgroundEnabled }
+
+    mutating func select(_ id: UUID, name: String) {
+        selectedID = id
+        selectedName = name
+        retryAttempt = 0
+        generation &+= 1
+    }
+
+    mutating func start(at date: Date) {
+        guard !rhythmRequested else { return }
+        rhythmRequested = true
+        startedAt = date
+        retryAttempt = 0
+        generation &+= 1
+    }
+
+    mutating func setBackgroundEnabled(_ enabled: Bool) {
+        guard backgroundEnabled != enabled else { return }
+        backgroundEnabled = enabled
+        generation &+= 1
+    }
+
+    mutating func stop(clearSelection: Bool = false) {
+        rhythmRequested = false
+        startedAt = nil
+        retryAttempt = 0
+        generation &+= 1
+        if clearSelection { selectedID = nil; selectedName = "" }
+    }
+
+    func permitsRecovery(inBackground: Bool) -> Bool {
+        rhythmRequested && selectedID != nil && selectedName.uppercased().hasPrefix("LT")
+            && (!inBackground || backgroundEnabled)
+    }
+
+    func permitsRestoration(at date: Date) -> Bool {
+        guard permitsRecovery(inBackground: true), (0..<4).contains(retryAttempt), let startedAt else { return false }
+        let age = date.timeIntervalSince(startedAt)
+        return age.isFinite && age >= 0 && age < Self.restorationLifetime
+    }
+
+    mutating func nextRetryDelay(inBackground: Bool) -> TimeInterval? {
+        let delays: [TimeInterval] = [1, 2, 4, 8]
+        guard permitsRecovery(inBackground: inBackground), delays.indices.contains(retryAttempt) else { return nil }
+        let delay = delays[retryAttempt]
+        retryAttempt += 1
+        return delay
+    }
+}
+
 @MainActor
 final class LightstickManager: NSObject, ObservableObject {
+    static let restorationIdentifier = "com.magiicccc.wanshoujian.rhythm.central.v1"
+    private static let restorationIntentKey = "lightstick.background-rhythm-intent.v1"
     @Published private(set) var phase: ConnectionPhase = .idle
     @Published private(set) var devices: [SwordDevice] = []
     @Published private(set) var deviceName = ""
@@ -140,19 +204,24 @@ final class LightstickManager: NSObject, ObservableObject {
     @Published private(set) var message = "选择宝宝剑后，可手动验证颜色与亮度。"
     @Published private(set) var lastSubmitted = ""
     @Published private(set) var isSending = false
+    @Published private(set) var lastRhythmColor: LightRGB?
+    @Published private(set) var isRestoringSession = false
     @Published var colorHex = "#00FF00"
     @Published var brightness: Double = 0.25
 
-    var canControl: Bool { phase == .ready && !gate.isReleasing && !backgrounded }
+    var canControl: Bool { phase == .ready && !gate.isReleasing && (!backgrounded || rhythmIntent.keepsBackgroundConnection) }
     var hasCreatedCentralManager: Bool { central != nil }
+    private var canDrain: Bool { canControl || (finalBlackPending && phase == .ready && !gate.isReleasing) }
 
     private enum Step: Equatable {
         case none, connecting, services, characteristics, mac, compatibility, firmware
         case beforeChallenge, challengeWrite, beforeSignature, signature, complete
     }
+    private enum ConnectionOrigin: Equatable { case manual, reconnect, restored }
 
     private let preview: Bool
     private let policy: LightstickDevicePolicy
+    private let preferences: UserDefaults
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var discovered: [UUID: CBPeripheral] = [:]
@@ -165,8 +234,17 @@ final class LightstickManager: NSObject, ObservableObject {
     private var gate = LightstickSessionGate()
     private var queue = LatestLightQueue()
     private var step: Step = .none
+    private var connectionOrigin: ConnectionOrigin = .manual
     private var wantsScan = false
     private var backgrounded = false
+    private var rhythmIntent = LightstickRhythmIntent()
+    private var finalBlackPending = false
+    private var disconnectAfterDrain = false
+    private var wantsReconnect = false
+    private var pendingRestored: [CBPeripheral] = []
+    private var discardedRestoredIDs: Set<UUID> = []
+    private var restoredStatePending = false
+    private var recoveryExhausted = false
     private var scanGeneration: UInt64 = 0
     private var responseWindow = LightstickResponseWindow()
     private var releaseDestination: ConnectionPhase = .idle
@@ -177,6 +255,9 @@ final class LightstickManager: NSObject, ObservableObject {
     private var drainTask: Task<Void, Never>?
     private var sendWaitTask: Task<Void, Never>?
     private var releaseTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectPowerTask: Task<Void, Never>?
+    private var finalDisconnectTask: Task<Void, Never>?
 
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
     private var requiredServices: [CBUUID] {
@@ -192,8 +273,9 @@ final class LightstickManager: NSObject, ObservableObject {
         ]
     }
 
-    init(preview: Bool = false, expectedMACHash: String? = nil) {
+    init(preview: Bool = false, expectedMACHash: String? = nil, preferences: UserDefaults = .standard) {
         self.preview = preview
+        self.preferences = preferences
         let configured = expectedMACHash ?? Bundle.main.object(forInfoDictionaryKey: "KnownDeviceMACSHA256") as? String ?? ""
         policy = LightstickDevicePolicy(expectedMACHash: configured.trimmingCharacters(in: .whitespacesAndNewlines))
         super.init()
@@ -211,14 +293,15 @@ final class LightstickManager: NSObject, ObservableObject {
             message = "当前为屏幕演示，可直接调整灯效。"
             return
         }
-        guard gate.canBegin else {
+        guard gate.canBegin, pendingRestored.isEmpty, discardedRestoredIDs.isEmpty else {
             message = "请先断开当前连接，并等待系统完成释放。"
             return
         }
+        cancelRhythmIntent(clearSelection: true)
         wantsScan = true
         if central == nil {
             waitForCentralState()
-            central = CBCentralManager(delegate: self, queue: .main)
+            createCentral()
         } else if let central { handleCentralState(central) }
     }
 
@@ -266,7 +349,7 @@ final class LightstickManager: NSObject, ObservableObject {
 
     func connect(_ id: UUID) {
         guard !preview else { phase = .ready; message = "屏幕演示已就绪。"; return }
-        guard !backgrounded, gate.canBegin else {
+        guard !backgrounded, gate.canBegin, pendingRestored.isEmpty, discardedRestoredIDs.isEmpty else {
             message = "请等待当前会话释放后再连接。"
             return
         }
@@ -277,27 +360,244 @@ final class LightstickManager: NSObject, ObservableObject {
             return
         }
         stopScan()
-        guard gate.begin(id) != nil else { return }
+        cancelRecoveryTasks()
+        rhythmIntent.select(id, name: selected.name)
+        recoveryExhausted = false
+        persistRhythmIntent()
+        beginConnection(candidate, name: selected.name)
+    }
+
+    private func beginConnection(_ candidate: CBPeripheral, name: String, origin: ConnectionOrigin = .manual) {
+        guard let central, central.state == .poweredOn, gate.begin(candidate.identifier) != nil else { return }
+        cancelRecoveryTasks()
+        stopScan()
         peripheral = candidate
+        connectionOrigin = origin
         candidate.delegate = self
-        deviceName = selected.name
+        deviceName = name
         firmware = ""; mac = ""; macBytes = Data(); lastSubmitted = ""
+        lastRhythmColor = nil
+        services = [:]; characteristics = [:]; pendingServices = []
         queue.reset(); isSending = false
         phase = .connecting; step = .connecting
-        message = "正在连接 \(selected.name)。"
+        message = "正在连接 \(name)。"
         armStageTimeout(12, message: "连接等待超时，请检查宝宝剑配对状态")
-        central.connect(candidate, options: nil)
+        switch candidate.state {
+        case .connected: handleConnected(candidate)
+        case .connecting: break
+        case .disconnected: central.connect(candidate, options: nil)
+        case .disconnecting: startDisconnect(destination: .idle, message: "正在结束旧连接以重新校验设备。")
+        @unknown default: fail("请重新连接以读取设备状态")
+        }
     }
 
     func disconnect() {
+        cancelRhythmIntent(clearSelection: true)
         startDisconnect(destination: .idle, message: "连接已断开。")
     }
 
-    func pauseForBackground() {
+    func setBackgroundRhythmEnabled(_ enabled: Bool) {
+        if backgrounded && !enabled { endRhythm(sendBlack: true) }
+        rhythmIntent.setBackgroundEnabled(enabled)
+        cancelRecoveryTasks()
+        persistRhythmIntent()
+        if backgrounded && !rhythmIntent.keepsBackgroundConnection && !finalBlackPending
+            && finalDisconnectTask == nil && phase != .disconnecting {
+            startDisconnect(destination: .idle, message: "后台律动已关闭。")
+        } else if gate.canBegin { scheduleReconnect() }
+    }
+
+    func applicationDidEnterBackground() {
         backgrounded = true
-        startDisconnect(destination: .idle, message: "前台控制已暂停，返回后可重新连接。")
+        stopScan()
         devices = []
         discovered = [:]
+        if rhythmIntent.keepsBackgroundConnection {
+            if gate.canBegin { scheduleReconnect() }
+            else {
+                message = isRestoringSession ? "正在恢复设备会话，音乐律动可在前台重新开始。"
+                    : "后台律动已启用，将继续跟随当前音频。"
+            }
+        } else {
+            cancelRhythmIntent()
+            if finalBlackPending && phase == .ready {
+                disconnectAfterDrain = true
+                drain()
+            } else if finalDisconnectTask == nil {
+                startDisconnect(destination: .idle, message: "手动控制已暂停，返回后可重新扫描。")
+            }
+        }
+    }
+
+    func applicationWillEnterForeground() {
+        backgrounded = false
+        finalDisconnectTask?.cancel(); finalDisconnectTask = nil
+        if gate.canBegin { scheduleReconnect() }
+        if isRestoringSession {
+            message = phase == .ready ? "设备会话已恢复，音乐律动可在前台重新开始。"
+                : "设备会话正在恢复，音乐律动可在前台重新开始。"
+        }
+    }
+
+    func pauseForBackground() { applicationDidEnterBackground() }
+
+    func submitRhythmColor(_ color: LightRGB) {
+        guard !backgrounded || rhythmIntent.backgroundEnabled else { return }
+        let wasRequested = rhythmIntent.rhythmRequested
+        rhythmIntent.start(at: Date())
+        if !wasRequested {
+            recoveryExhausted = false
+            clearPendingColors()
+            persistRhythmIntent()
+        }
+        if preview && !backgrounded && phase == .idle { phase = .ready }
+        isRestoringSession = false
+        if canControl { enqueue(color) }
+        else if gate.canBegin { scheduleReconnect() }
+    }
+
+    func endRhythm(sendBlack: Bool) {
+        let maySendBlack = sendBlack && canDrain
+        let cancelInitialization = connectionOrigin != .manual && phase != .ready && !gate.canBegin
+        cancelRhythmIntent()
+        clearPendingColors()
+        disconnectAfterDrain = backgrounded && maySendBlack
+        finalBlackPending = maySendBlack
+        if maySendBlack { enqueue(LightRGB(red: 0, green: 0, blue: 0)) }
+        else if backgrounded || cancelInitialization { startDisconnect(destination: .idle, message: "音乐律动已停止。") }
+    }
+
+    private func cancelRhythmIntent(clearSelection: Bool = false) {
+        cancelRecoveryTasks()
+        rhythmIntent.stop(clearSelection: clearSelection)
+        recoveryExhausted = false
+        lastRhythmColor = nil
+        isRestoringSession = false
+        persistRhythmIntent()
+    }
+
+    private func clearPendingColors() {
+        drainTask?.cancel(); drainTask = nil
+        sendWaitTask?.cancel(); sendWaitTask = nil
+        finalDisconnectTask?.cancel(); finalDisconnectTask = nil
+        queue.removePending()
+        isSending = false
+        finalBlackPending = false
+        disconnectAfterDrain = false
+    }
+
+    private func persistRhythmIntent() {
+        guard !preview else { return }
+        if rhythmIntent.permitsRestoration(at: Date()), let data = try? JSONEncoder().encode(rhythmIntent) {
+            preferences.set(data, forKey: Self.restorationIntentKey)
+        } else { preferences.removeObject(forKey: Self.restorationIntentKey) }
+    }
+
+    private func createCentral() {
+        guard !preview, central == nil else { return }
+        central = CBCentralManager(delegate: self, queue: .main,
+            options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restorationIdentifier])
+    }
+
+    func restoreIfRequested(identifiers: [String]) {
+        guard !preview, identifiers.contains(Self.restorationIdentifier), central == nil, gate.canBegin else { return }
+        if let data = preferences.data(forKey: Self.restorationIntentKey),
+           let saved = try? JSONDecoder().decode(LightstickRhythmIntent.self, from: data),
+           saved.permitsRestoration(at: Date()) {
+            rhythmIntent = saved
+            isRestoringSession = true
+            backgrounded = true
+            message = "正在恢复已启用的后台设备会话，并重新核对宝宝剑。"
+        } else {
+            preferences.removeObject(forKey: Self.restorationIntentKey)
+            message = "旧后台会话已结束，可在前台重新选择设备。"
+        }
+        // System restoration launches use the original identifier, even when old intent now requires cancellation.
+        createCentral()
+    }
+
+    private func cancelRecoveryTasks() {
+        reconnectTask?.cancel(); reconnectTask = nil
+        reconnectPowerTask?.cancel(); reconnectPowerTask = nil
+        wantsReconnect = false
+    }
+
+    private func scheduleReconnect() {
+        guard !preview, gate.canBegin, pendingRestored.isEmpty, discardedRestoredIDs.isEmpty,
+              reconnectTask == nil, !wantsReconnect, !wantsScan, !recoveryExhausted,
+              rhythmIntent.permitsRecovery(inBackground: backgrounded) else { return }
+        guard let delay = rhythmIntent.nextRetryDelay(inBackground: backgrounded) else {
+            recoveryExhausted = true
+            message = "本轮自动重连已结束，可在前台重新选择宝宝剑。"
+            preferences.removeObject(forKey: Self.restorationIntentKey)
+            return
+        }
+        persistRhythmIntent()
+        let token = rhythmIntent.generation
+        message = "宝宝剑暂时离线，将在 \(Int(delay)) 秒后重连已选设备。"
+        reconnectTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            guard let self, token == self.rhythmIntent.generation, self.gate.canBegin,
+                  self.rhythmIntent.permitsRecovery(inBackground: self.backgrounded) else { return }
+            self.reconnectTask = nil
+            self.wantsReconnect = true
+            if self.central == nil { self.createCentral() }
+            if self.central?.state == .poweredOn { self.connectSelectedPeripheral() }
+            else { self.waitForReconnectPower() }
+        }
+    }
+
+    private func waitForReconnectPower() {
+        reconnectPowerTask?.cancel()
+        let token = rhythmIntent.generation
+        reconnectPowerTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
+            guard let self, token == self.rhythmIntent.generation, self.wantsReconnect else { return }
+            self.reconnectPowerTask = nil
+            self.wantsReconnect = false
+            self.scheduleReconnect()
+        }
+    }
+
+    private func connectSelectedPeripheral() {
+        guard let central, central.state == .poweredOn, gate.canBegin, wantsReconnect,
+              let id = rhythmIntent.selectedID, rhythmIntent.permitsRecovery(inBackground: backgrounded) else { return }
+        reconnectPowerTask?.cancel(); reconnectPowerTask = nil
+        wantsReconnect = false
+        guard let candidate = central.retrievePeripherals(withIdentifiers: [id]).first(where: { $0.identifier == id }) else {
+            scheduleReconnect()
+            return
+        }
+        beginConnection(candidate, name: rhythmIntent.selectedName, origin: .reconnect)
+    }
+
+    private func processRestoredPeripherals() {
+        guard let central, central.state == .poweredOn, !pendingRestored.isEmpty else { return }
+        stopScan()
+        let values = pendingRestored
+        pendingRestored = []
+        let selected = rhythmIntent.permitsRecovery(inBackground: backgrounded) ? rhythmIntent.selectedID : nil
+        var candidate: CBPeripheral?
+        var handled: Set<UUID> = []
+        for value in values {
+            guard handled.insert(value.identifier).inserted else { continue }
+            if value.identifier == selected && candidate == nil { candidate = value }
+            else if value.state != .disconnected {
+                discardedRestoredIDs.insert(value.identifier)
+                value.delegate = nil
+                central.cancelPeripheralConnection(value)
+            }
+        }
+        if let candidate, gate.canBegin {
+            // Always rediscover and repeat MAC, firmware and challenge reads; cached characteristics stay unused.
+            beginConnection(candidate, name: rhythmIntent.selectedName, origin: .restored)
+        } else if discardedRestoredIDs.isEmpty {
+            if !rhythmIntent.rhythmRequested { phase = .idle }
+            scheduleReconnect()
+        } else if gate.canBegin {
+            phase = .disconnecting
+            message = "正在释放已结束的后台设备会话。"
+        }
     }
 
     func applyColor(_ hex: String) {
@@ -306,13 +606,13 @@ final class LightstickManager: NSObject, ObservableObject {
             return
         }
         colorHex = color.hex
-        if canControl { sendCurrent() }
+        if canControl && !rhythmIntent.rhythmRequested { sendCurrent() }
     }
 
     func applyBrightness(_ value: Double) {
         guard value.isFinite else { message = "请选择有效的亮度。"; return }
         brightness = min(1, max(0, value))
-        if canControl { sendCurrent() }
+        if canControl && !rhythmIntent.rhythmRequested { sendCurrent() }
     }
 
     func sendCurrent() {
@@ -334,6 +634,12 @@ final class LightstickManager: NSObject, ObservableObject {
         if preview {
             lastSubmitted = color.hex
             message = "屏幕预览：\(color.hex)。"
+            if rhythmIntent.rhythmRequested || finalBlackPending { lastRhythmColor = color }
+            finalBlackPending = false
+            if disconnectAfterDrain {
+                disconnectAfterDrain = false
+                startDisconnect(destination: .idle, message: "音乐律动已停止。")
+            }
             return
         }
         queue.offer(color)
@@ -342,7 +648,7 @@ final class LightstickManager: NSObject, ObservableObject {
     }
 
     private func drain() {
-        guard canControl, queue.hasPending, let peripheral,
+        guard canDrain, queue.hasPending, let peripheral,
               let writer = characteristic(LightstickProtocol.colorWrite) else { return }
         if queue.sequenceExhausted { fail("本轮序号已用完，请重新连接"); return }
         guard peripheral.canSendWriteWithoutResponse else {
@@ -376,9 +682,22 @@ final class LightstickManager: NSObject, ObservableObject {
             return
         }
         peripheral.writeValue(packet, for: writer, type: .withoutResponse)
+        if rhythmIntent.rhythmRequested || finalBlackPending { lastRhythmColor = submission.color }
+        finalBlackPending = false
         lastSubmitted = submission.color.hex
-        message = "已提交 \(submission.color.hex)，请观察宝宝剑的实际颜色。"
+        if !rhythmIntent.rhythmRequested { message = "已提交 \(submission.color.hex)，请观察宝宝剑的实际颜色。" }
         isSending = queue.hasPending
+        if disconnectAfterDrain {
+            disconnectAfterDrain = false
+            let token = gate.generation
+            // Without-response writes have no delivery callback; allow a short transmit grace before local cancellation.
+            finalDisconnectTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+                guard let self, self.gate.generation == token, !self.rhythmIntent.rhythmRequested else { return }
+                self.finalDisconnectTask = nil
+                self.startDisconnect(destination: .idle, message: "音乐律动已停止。")
+            }
+        }
     }
 
     private func characteristic(_ uuid: String) -> CBCharacteristic? { characteristics[CBUUID(string: uuid)] }
@@ -455,16 +774,22 @@ final class LightstickManager: NSObject, ObservableObject {
         }
     }
 
-    private func fail(_ reason: String) { startDisconnect(destination: .failed, message: reason) }
+    private func fail(_ reason: String, allowRecovery: Bool = true) {
+        if !allowRecovery { cancelRhythmIntent(clearSelection: true) }
+        startDisconnect(destination: .failed, message: reason)
+    }
 
     private func cancelSessionTasks() {
         stageTask?.cancel(); stageTask = nil
         handshakeTask?.cancel(); handshakeTask = nil
         drainTask?.cancel(); drainTask = nil
         sendWaitTask?.cancel(); sendWaitTask = nil
+        finalDisconnectTask?.cancel(); finalDisconnectTask = nil
         expectedRead = nil; expectedWrite = nil
         responseWindow = LightstickResponseWindow()
         queue.reset(); isSending = false
+        lastRhythmColor = nil
+        finalBlackPending = false; disconnectAfterDrain = false
     }
 
     private func startDisconnect(destination: ConnectionPhase, message reason: String) {
@@ -473,6 +798,7 @@ final class LightstickManager: NSObject, ObservableObject {
         if preview { phase = .idle; message = reason; return }
         guard let peripheral, gate.activeID == peripheral.identifier else {
             phase = destination; message = reason
+            scheduleReconnect()
             return
         }
         if gate.isReleasing { return }
@@ -491,6 +817,16 @@ final class LightstickManager: NSObject, ObservableObject {
     }
 
     private func finishConnection(_ value: CBPeripheral, failed: Bool, error: Error?) {
+        if discardedRestoredIDs.remove(value.identifier) != nil {
+            if discardedRestoredIDs.isEmpty {
+                if gate.canBegin && !rhythmIntent.rhythmRequested {
+                    phase = .idle
+                    message = "旧设备会话已释放，可重新扫描宝宝剑。"
+                }
+                scheduleReconnect()
+            }
+            return
+        }
         guard gate.activeID == value.identifier else { return }
         let wasReleasing = gate.isReleasing
         cancelSessionTasks()
@@ -504,37 +840,54 @@ final class LightstickManager: NSObject, ObservableObject {
             phase = failed || error != nil ? .failed : .idle
             message = failed ? "连接未完成，请确认宝宝剑处于配对状态。" : "宝宝剑连接已断开，可重新扫描连接。"
         }
+        scheduleReconnect()
     }
 
     private func invalidateCentralSession(_ reason: String) {
         // CoreBluetooth declares sessions disconnected below poweredOn; a fresh central isolates old callbacks.
         stopScan()
         cancelSessionTasks()
+        cancelRecoveryTasks()
         releaseTask?.cancel(); releaseTask = nil
         peripheral?.delegate = nil
         central?.delegate = nil
         central = nil; peripheral = nil
         services = [:]; characteristics = [:]; pendingServices = []
         discovered = [:]; devices = []
+        pendingRestored = []; discardedRestoredIDs = []; restoredStatePending = false
         gate.invalidate()
         step = .none
         phase = .failed
         message = reason
+        scheduleReconnect()
     }
 
     private func handleCentralState(_ value: CBCentralManager) {
         guard central === value, !preview else { return }
         if value.state == .poweredOn {
+            if restoredStatePending {
+                restoredStatePending = false
+                stopScan()
+                if pendingRestored.isEmpty && !rhythmIntent.rhythmRequested && gate.canBegin { phase = .idle }
+            }
+            processRestoredPeripherals()
+            if wantsReconnect { connectSelectedPeripheral() }
+            else if isRestoringSession && gate.canBegin { scheduleReconnect() }
             if wantsScan && gate.canBegin && !backgrounded { beginScan() }
             return
         }
         let reason: String
         switch value.state {
-        case .unauthorized: reason = "请在系统设置中允许本 App 使用蓝牙。"
+        case .unauthorized:
+            cancelRhythmIntent()
+            reason = "请在系统设置中允许本 App 使用蓝牙。"
         case .poweredOff: reason = "请开启系统蓝牙后重新扫描。"
-        case .unsupported: reason = "当前设备的蓝牙功能不支持本次连接。"
+        case .unsupported:
+            cancelRhythmIntent()
+            reason = "当前设备的蓝牙功能不支持本次连接。"
         case .unknown, .resetting:
             if gate.canBegin && discovered.isEmpty {
+                if wantsReconnect || !pendingRestored.isEmpty { return }
                 if wantsScan && scanTask == nil { waitForCentralState() }
                 message = "正在等待系统蓝牙状态。"
                 return
@@ -618,9 +971,9 @@ final class LightstickManager: NSObject, ObservableObject {
             read(LightstickProtocol.firmwareRead, as: .firmware)
         case .firmware:
             firmware = String(data: data, encoding: .utf8)?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\0"))) ?? ""
-            guard policy.isConfigured else { fail("请先在 App 配置中登记宝宝剑的设备摘要"); return }
+            guard policy.isConfigured else { fail("请先在 App 配置中登记宝宝剑的设备摘要", allowRecovery: false); return }
             guard policy.accepts(name: deviceName, mac: mac, firmware: firmware) else {
-                fail("请选择已登记且固件为 v0.20.14 的宝宝剑")
+                fail("请选择已登记且固件为 v0.20.14 的宝宝剑", allowRecovery: false)
                 return
             }
             message = "正在发送设备确认请求。"
@@ -630,7 +983,9 @@ final class LightstickManager: NSObject, ObservableObject {
             step = .complete
             phase = .ready
             queue.reset(); isSending = false
-            message = "设备响应结构已确认。请选择颜色发送，并观察实物效果。"
+            message = isRestoringSession ? "设备会话已恢复并重新校验，可在前台重新开始音乐律动。"
+                : rhythmIntent.rhythmRequested ? "宝宝剑已重新就绪，将跟随新的音频灯光。"
+                : "设备响应结构已确认。请选择颜色发送，并观察实物效果。"
         default: return
         }
     }
@@ -647,6 +1002,15 @@ final class LightstickManager: NSObject, ObservableObject {
 
 // The central and its peripheral delegates use DispatchQueue.main; keep callback ordering synchronous.
 extension LightstickManager: CBCentralManagerDelegate, CBPeripheralDelegate {
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        MainActor.assumeIsolated {
+            guard self.central === central, !preview else { return }
+            pendingRestored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+            restoredStatePending = true
+            if central.state == .poweredOn { handleCentralState(central) }
+        }
+    }
+
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated { handleCentralState(central) }
     }

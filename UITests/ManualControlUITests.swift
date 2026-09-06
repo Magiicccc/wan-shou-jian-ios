@@ -23,12 +23,17 @@ final class ManualControlUITests: XCTestCase {
         app.launchArguments = ["--preview"]
         app.launch()
 
+        XCTAssertTrue(app.buttons["wake-rhythm"].waitForExistence(timeout: 10))
+        attach(app, name: "01-rhythm-home")
+        app.buttons["tab-1"].tap()
+        app.buttons["open-manual"].tap()
+
         let primary = app.buttons["primary-control"]
         XCTAssertTrue(primary.waitForExistence(timeout: 10))
         XCTAssertEqual(primary.label, "界面演示")
         XCTAssertFalse(primary.isEnabled)
         XCTAssertTrue(primary.frame.intersects(app.frame))
-        attach(app, name: "01-initial-preview")
+        attach(app, name: "02-manual-preview")
 
         let red = app.buttons["preset-red"]
         reveal(red, in: app)
@@ -40,21 +45,51 @@ final class ManualControlUITests: XCTestCase {
         brightness.adjust(toNormalizedSliderPosition: 0.5)
         XCTAssertTrue(app.staticTexts["brightness-value"].label.contains("%"))
         XCTAssertFalse(primary.isEnabled)
-        attach(app, name: "02-red-controls-preview")
+        attach(app, name: "03-red-controls-preview")
     }
 
     func testLargeTextKeepsPrimaryActionOnScreen() {
         let app = XCUIApplication()
         app.launchArguments = ["--preview", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
-        let primary = app.buttons["primary-control"]
+        let primary = app.buttons["wake-rhythm"]
         XCTAssertTrue(primary.waitForExistence(timeout: 10))
         XCTAssertTrue(primary.frame.intersects(app.frame))
-        XCTAssertFalse(primary.isEnabled)
-        let blue = app.buttons["preset-blue"]
-        reveal(blue, in: app)
-        XCTAssertTrue(blue.isHittable)
-        attach(app, name: "03-accessibility-preview")
+        XCTAssertTrue(primary.isEnabled)
+        XCTAssertTrue(app.buttons["tab-2"].isHittable)
+        attach(app, name: "04-accessibility-home")
+    }
+
+    func testSyntheticRhythmStartsAndStopsFromImmersiveView() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview"]
+        app.launch()
+        let wake = app.buttons["wake-rhythm"]
+        XCTAssertTrue(wake.waitForExistence(timeout: 10))
+        wake.tap()
+        let stop = app.buttons["stop-rhythm"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["合成音乐预览"].exists)
+        attach(app, name: "05-immersive-preview")
+        stop.tap()
+        XCTAssertTrue(wake.waitForExistence(timeout: 5))
+        XCTAssertEqual(wake.label, "预览律动")
+    }
+
+    func testBackgroundSettingIsInteractive() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview"]
+        app.launch()
+        XCTAssertTrue(app.buttons["tab-2"].waitForExistence(timeout: 10))
+        app.buttons["tab-2"].tap()
+        let toggle = app.switches["background-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        let original = toggle.value as? String
+        toggle.tap()
+        XCTAssertNotEqual(toggle.value as? String, original)
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, original)
+        attach(app, name: "06-background-settings")
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {

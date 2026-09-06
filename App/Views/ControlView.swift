@@ -68,8 +68,6 @@ struct ControlView: View {
 
             ScrollView {
                 VStack(spacing: 22) {
-                    header
-                    swordPreview
                     colorControls
                     connectionControls
                     footer
@@ -459,16 +457,16 @@ struct ControlView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 Image(systemName: "iphone")
-                Text("保持应用在前台")
+                Text("逐项观察剑身变化")
                     .fontWeight(.medium)
             }
             .font(.footnote)
             .foregroundStyle(Palette.silver)
-            Text("切到后台会释放连接。音乐律动与后台持续控灯将在后续版本验证。")
+            Text("本页用于固定颜色与亮度验证。返回律动页启动音乐会话后，可按设置继续后台拾音与控灯。")
                 .font(.caption)
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("谦友自制 · 手动调光体验版")
+            Text("手动控制 · 实物验证")
                 .font(.caption2)
                 .foregroundStyle(Palette.muted)
                 .padding(.top, 8)

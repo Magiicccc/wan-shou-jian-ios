@@ -135,6 +135,175 @@ final class LightstickSessionTests: XCTestCase {
         XCTAssertFalse(window.isOpen(at: 0))
     }
 
+    func testRhythmRecoveryRequiresSelectedDeviceAndExplicitRhythmIntent() {
+        var intent = LightstickRhythmIntent()
+        intent.setBackgroundEnabled(true)
+        XCTAssertFalse(intent.permitsRecovery(inBackground: true))
+        intent.start(at: Date())
+        XCTAssertFalse(intent.permitsRecovery(inBackground: false))
+        intent.select(UUID(), name: "LTDEMO")
+        XCTAssertTrue(intent.permitsRecovery(inBackground: true))
+        intent.setBackgroundEnabled(false)
+        XCTAssertTrue(intent.permitsRecovery(inBackground: false))
+        XCTAssertFalse(intent.permitsRecovery(inBackground: true))
+        intent.stop()
+        XCTAssertFalse(intent.permitsRecovery(inBackground: false))
+        XCTAssertNotNil(intent.selectedID)
+    }
+
+    func testRhythmRecoveryBudgetIsBoundedAndStopInvalidatesPendingGeneration() {
+        var intent = LightstickRhythmIntent()
+        intent.select(UUID(), name: "LTDEMO")
+        intent.start(at: Date())
+        let token = intent.generation
+        XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 1)
+        XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 2)
+        XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 4)
+        XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 8)
+        XCTAssertNil(intent.nextRetryDelay(inBackground: false))
+        intent.stop()
+        XCTAssertGreaterThan(intent.generation, token)
+        XCTAssertNil(intent.nextRetryDelay(inBackground: false))
+        intent.start(at: Date())
+        XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 1)
+        intent.stop(clearSelection: true)
+        XCTAssertNil(intent.selectedID)
+    }
+
+    func testRestorationIntentHasBoundedAgeAndSurvivesEncoding() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        var intent = LightstickRhythmIntent()
+        intent.select(UUID(), name: "LTDEMO")
+        intent.setBackgroundEnabled(true)
+        intent.start(at: start)
+        let restored = try JSONDecoder().decode(LightstickRhythmIntent.self, from: JSONEncoder().encode(intent))
+        XCTAssertEqual(restored.selectedID, intent.selectedID)
+        XCTAssertTrue(restored.permitsRestoration(at: start.addingTimeInterval(100)))
+        XCTAssertFalse(restored.permitsRestoration(at: start.addingTimeInterval(-1)))
+        XCTAssertFalse(restored.permitsRestoration(at: start.addingTimeInterval(6 * 60 * 60)))
+        intent.setBackgroundEnabled(false)
+        XCTAssertFalse(intent.permitsRestoration(at: start))
+        intent.setBackgroundEnabled(true)
+        intent.stop()
+        XCTAssertFalse(intent.permitsRestoration(at: start))
+    }
+
+    func testRhythmStopClearsPendingColorWithoutReusingWireSequence() {
+        var queue = LatestLightQueue()
+        let color = LightRGB(red: 10, green: 20, blue: 30)
+        queue.offer(color)
+        XCTAssertEqual(queue.take(at: 1, capacityAvailable: true)?.sequence, 1)
+        queue.offer(color)
+        queue.removePending()
+        XCTAssertFalse(queue.hasPending)
+        queue.offer(LightRGB(red: 0, green: 0, blue: 0))
+        XCTAssertNil(queue.take(at: 1.1, capacityAvailable: true))
+        XCTAssertEqual(queue.take(at: 1.21, capacityAvailable: true)?.sequence, 2)
+    }
+
+    @MainActor
+    func testEnabledBackgroundRhythmKeepsPreviewAndStopEmitsBlack() async {
+        let manager = LightstickManager(preview: true)
+        manager.setBackgroundRhythmEnabled(true)
+        let color = LightRGB(red: 24, green: 72, blue: 144)
+        manager.submitRhythmColor(color)
+        XCTAssertEqual(manager.lastRhythmColor, color)
+        XCTAssertEqual(manager.lastSubmitted, "#184890")
+        manager.applicationDidEnterBackground()
+        XCTAssertTrue(manager.canControl)
+        manager.submitRhythmColor(LightRGB(red: 1, green: 2, blue: 3))
+        XCTAssertEqual(manager.lastSubmitted, "#010203")
+        manager.endRhythm(sendBlack: true)
+        XCTAssertEqual(manager.lastSubmitted, "#000000")
+        XCTAssertEqual(manager.phase, .idle)
+        XCTAssertNil(manager.lastRhythmColor)
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+    }
+
+    @MainActor
+    func testBrightnessAdjustmentWaitsForFreshRhythmFrameWithoutManualColorFlash() async {
+        let manager = LightstickManager(preview: true)
+        manager.submitRhythmColor(LightRGB(red: 10, green: 20, blue: 30))
+        manager.applyBrightness(0.8)
+        manager.applyColor("#FF0000")
+        XCTAssertEqual(manager.lastSubmitted, "#0A141E")
+        XCTAssertEqual(manager.brightness, 0.8)
+        manager.endRhythm(sendBlack: false)
+        manager.applyColor("#00FF00")
+        XCTAssertEqual(manager.lastSubmitted, "#00CC00")
+    }
+
+    @MainActor
+    func testUnconnectedRhythmTargetDoesNotPublishSubmittedColor() async throws {
+        let suite = "WanShouJianTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let manager = LightstickManager(preferences: defaults)
+        manager.submitRhythmColor(LightRGB(red: 10, green: 20, blue: 30))
+        XCTAssertNil(manager.lastRhythmColor)
+        XCTAssertEqual(manager.lastSubmitted, "")
+        XCTAssertFalse(manager.isSending)
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+        manager.endRhythm(sendBlack: false)
+    }
+
+    @MainActor
+    func testPreviewPublishesRhythmAndFinalBlackSubmissionThenClearsOnDisconnect() async {
+        let manager = LightstickManager(preview: true)
+        manager.applyColor("#FF0000")
+        XCTAssertNil(manager.lastRhythmColor)
+        let color = LightRGB(red: 10, green: 20, blue: 30)
+        manager.submitRhythmColor(color)
+        XCTAssertEqual(manager.lastRhythmColor, color)
+        manager.endRhythm(sendBlack: true)
+        XCTAssertEqual(manager.lastRhythmColor, LightRGB(red: 0, green: 0, blue: 0))
+        manager.disconnect()
+        XCTAssertNil(manager.lastRhythmColor)
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+    }
+
+    @MainActor
+    func testBackgroundSwitchAloneKeepsManualModeForegroundOnly() async {
+        let manager = LightstickManager(preview: true)
+        manager.setBackgroundRhythmEnabled(true)
+        manager.applicationDidEnterBackground()
+        XCTAssertEqual(manager.phase, .idle)
+        XCTAssertFalse(manager.canControl)
+        XCTAssertNil(manager.lastRhythmColor)
+        manager.applicationWillEnterForeground()
+        manager.submitRhythmColor(LightRGB(red: 3, green: 2, blue: 1))
+        XCTAssertTrue(manager.canControl)
+        XCTAssertEqual(manager.lastSubmitted, "#030201")
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+    }
+
+    @MainActor
+    func testBackgroundOptOutStopsRhythmAndPreviewRestorationAvoidsBluetooth() async {
+        let manager = LightstickManager(preview: true)
+        manager.setBackgroundRhythmEnabled(true)
+        manager.submitRhythmColor(LightRGB(red: 1, green: 2, blue: 3))
+        manager.applicationDidEnterBackground()
+        manager.setBackgroundRhythmEnabled(false)
+        XCTAssertEqual(manager.phase, .idle)
+        XCTAssertEqual(manager.lastSubmitted, "#000000")
+        manager.submitRhythmColor(LightRGB(red: 4, green: 5, blue: 6))
+        XCTAssertNil(manager.lastRhythmColor)
+        manager.restoreIfRequested(identifiers: [LightstickManager.restorationIdentifier])
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+    }
+
+    @MainActor
+    func testEndingRhythmRemovesPersistedRestorationIntent() async throws {
+        let suite = "WanShouJianTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(Data([1, 2, 3]), forKey: "lightstick.background-rhythm-intent.v1")
+        let manager = LightstickManager(preferences: defaults)
+        manager.endRhythm(sendBlack: true)
+        XCTAssertNil(defaults.object(forKey: "lightstick.background-rhythm-intent.v1"))
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+    }
+
     @MainActor
     func testConstructionAndPreviewControlsCreateNoBluetoothManager() async {
         let idle = LightstickManager(expectedMACHash: String(repeating: "0", count: 64))
