@@ -1,0 +1,13 @@
+.DS_Store
+build/
+*.xcodeproj/
+*.xcworkspace/
+App/Info.plist
+App/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+private/
+*.ipa
+*.p12
+*.mobileprovision
+.env*
+__pycache__/
+*.pyc

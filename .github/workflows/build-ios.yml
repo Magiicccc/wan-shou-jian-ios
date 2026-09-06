@@ -1,0 +1,47 @@
+name: iPhone build and preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record build tools
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Test and capture iPhone preview
+        run: bash scripts/run-tests.sh
+      - name: Build unsigned device IPA
+        env:
+          LIGHTSTICK_MAC_SHA256: ""
+        run: bash scripts/build-unsigned-ipa.sh
+      - name: Upload IPA and preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: WanShouJian-unsigned-ipa
+          path: |
+            build/WanShouJian-unsigned.ipa
+            build/sha256.txt
+            build/iphone-preview.png
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WanShouJian-test-results
+          path: build/Tests.xcresult
+          if-no-files-found: warn
+          retention-days: 7
