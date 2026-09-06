@@ -5,6 +5,19 @@ final class ManualControlUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    override func tearDownWithError() throws {
+        let app = XCUIApplication()
+        if app.state == .runningForeground {
+            attach(app, name: "final-ui-state")
+            let hierarchy = app.debugDescription
+            let attachment = XCTAttachment(string: hierarchy)
+            attachment.name = "accessibility-hierarchy"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if testRun?.hasSucceeded == false { print(hierarchy) }
+        }
+    }
+
     func testPreviewHasReachableControlsAndChangesColorWithoutConnecting() {
         let app = XCUIApplication()
         app.launchArguments = ["--preview"]

@@ -94,7 +94,6 @@ struct ControlView: View {
                     Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
                 }
         }
-        .accessibilityIdentifier("manual-control-screen")
     }
 
     private var header: some View {

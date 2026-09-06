@@ -12,10 +12,17 @@ mkdir -p build
 if [[ -e build/Tests.xcresult ]]; then
   mv build/Tests.xcresult "build/Tests-$(date +%s).xcresult"
 fi
+TEST_STATUS=0
 xcodebuild -project WanShouJian.xcodeproj -scheme WanShouJian \
   -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
   -derivedDataPath build/tests -resultBundlePath build/Tests.xcresult \
-  CODE_SIGNING_ALLOWED=NO test
+  CODE_SIGNING_ALLOWED=NO test || TEST_STATUS=$?
+if [[ -d build/Tests.xcresult ]]; then
+  xcrun xcresulttool export attachments --path build/Tests.xcresult --output-path build/test-attachments || printf '%s\n' 'Attachment export unavailable; the full result bundle is retained.'
+fi
+if [[ "$TEST_STATUS" -ne 0 ]]; then
+  exit "$TEST_STATUS"
+fi
 xcrun simctl boot "$SIMULATOR_ID" 2>/dev/null || true
 xcrun simctl bootstatus "$SIMULATOR_ID" -b
 xcrun simctl status_bar "$SIMULATOR_ID" override --time 9:41 --batteryState charged --batteryLevel 100
