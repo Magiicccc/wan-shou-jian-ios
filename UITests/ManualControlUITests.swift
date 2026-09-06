@@ -61,14 +61,18 @@ final class ManualControlUITests: XCTestCase {
         let scroll = app.scrollViews.firstMatch
         let primary = app.buttons["primary-control"]
         for _ in 0..<8 {
+            guard element.exists else {
+                scroll.swipeUp(velocity: .slow)
+                continue
+            }
             let frame = element.frame
             let top = max(scroll.frame.minY, app.frame.minY) + 44
             let bottom = min(scroll.frame.maxY, primary.frame.minY - 12)
             // SwiftUI can report a partially clipped control as hittable behind the fixed footer.
-            if element.exists && frame.height > 0 && frame.minY >= top && frame.maxY <= bottom && element.isHittable {
+            if frame.height > 0 && frame.minY >= top && frame.maxY <= bottom && element.isHittable {
                 return
             }
-            if element.exists && frame.minY < top {
+            if frame.minY < top {
                 scroll.swipeDown(velocity: .slow)
             } else {
                 scroll.swipeUp(velocity: .slow)
