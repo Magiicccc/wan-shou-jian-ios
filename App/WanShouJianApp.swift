@@ -6,12 +6,14 @@ final class AppRuntime: ObservableObject {
     static let shared = AppRuntime()
     let manager: LightstickManager
     let session: RhythmSession
+    let karaoke: KaraokeSession
 
     private init() {
         let preview = ProcessInfo.processInfo.arguments.contains("--preview")
         let manager = LightstickManager(preview: preview)
         self.manager = manager
         session = RhythmSession(manager: manager, preview: preview)
+        karaoke = KaraokeSession(manager: manager, preview: preview)
     }
 }
 
@@ -34,7 +36,7 @@ struct WanShouJianApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RhythmHomeView(manager: runtime.manager, session: runtime.session)
+            RhythmHomeView(manager: runtime.manager, session: runtime.session, karaoke: runtime.karaoke)
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {

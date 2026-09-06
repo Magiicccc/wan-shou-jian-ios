@@ -6,10 +6,10 @@
   "license_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
   "fonttools_version": "4.60.0",
   "postscript_name": "WSJDisplay-ExtraLight",
-  "source_file_count": 10,
-  "codepoint_count": 461,
-  "glyph_count": 1095,
-  "subset_bytes": 283024,
-  "subset_sha256": "f6aa925284a3dbfbb549cbb7279c996492aab4074d4781bebe8d997085313b0e",
-  "codepoints_sha256": "c0aaf5cd3bba3add860dc54f9aeb3ede8ef949eac9ac68e2ee6ad984fbae2f91"
+  "source_file_count": 16,
+  "codepoint_count": 601,
+  "glyph_count": 1327,
+  "subset_bytes": 357028,
+  "subset_sha256": "238e63a4427e4a292e1f4fd38e036f4561d53f972b36f2fd246249f7e44424c7",
+  "codepoints_sha256": "222ea035dc0bf525a4948421ba04ced3dcb00339ecc2fc2fe02abbe02457c17d"
 }

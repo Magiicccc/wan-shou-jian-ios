@@ -1,0 +1,155 @@
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct KaraokeView: View {
+    @ObservedObject var session:KaraokeSession
+    @State private var importer=false
+    @State private var lyricsImport=false
+    @State private var console=false
+    @State private var ai=false
+    @State private var showingReport=false
+    @State private var controls=true
+    @State private var lastTouch=Date()
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    var body: some View {
+        GeometryReader { g in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                VStack(spacing:0) {
+                    header.padding(.horizontal,24).padding(.top,12)
+                    FoxStageView(light:session.light,time:session.position,active:session.playing)
+                        .frame(height:g.size.height*0.44)
+                    KineticLyricsView(cue:session.currentCue,time:session.position,energy:session.energy)
+                        .frame(height:g.size.height*0.28).padding(.horizontal,28)
+                    Spacer(minLength:4)
+                    if controls || !session.playing || voiceOver { transport.padding(.horizontal,24).transition(.opacity) }
+                }
+            }
+            .foregroundStyle(Atmosphere.silver)
+            .contentShape(Rectangle())
+            .onTapGesture { controls=true;lastTouch=Date() }
+            .task(id:session.playing) {
+                while session.playing && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds:1_000_000_000)
+                    if Date().timeIntervalSince(lastTouch)>8 && !voiceOver { withAnimation { controls=false } }
+                }
+            }
+        }
+        .fileImporter(isPresented:$importer,allowedContentTypes:lyricsImport ? [.data,.plainText] : [.audio]) { result in
+            if case .success(let url)=result { if lyricsImport { session.importLyrics(url) } else { session.importAudio(url) } }
+        }
+        .sheet(isPresented:$console) { mixingConsole.presentationDetents([.medium,.large]) }
+        .sheet(isPresented:$ai) { DirectorSettingsView() }
+        .sheet(isPresented:$showingReport) { reportSheet }
+    }
+
+    private var header:some View {
+        HStack(alignment:.top) {
+            VStack(alignment:.leading,spacing:5) {
+                Text("私 人 舞 台").font(.system(size:10,weight:.medium)).tracking(4).foregroundStyle(Atmosphere.muted)
+                Text(session.title).font(Atmosphere.title(21)).lineLimit(1)
+            }
+            Spacer()
+            Menu {
+                Button("导入音频",systemImage:"music.note") { lyricsImport=false;importer=true }
+                Button("导入 LRC 歌词",systemImage:"text.alignleft") { lyricsImport=true;importer=true }
+                Button("原创演示",systemImage:"sparkles") { session.useDemo() }
+                Button("AI 接口设置",systemImage:"slider.horizontal.3") { ai=true }
+                Button("AI 编排本曲",systemImage:"wand.and.stars") { Task { await session.direct(using:client) } }
+                Button("演唱复盘",systemImage:"waveform.path") { showingReport=true }
+            } label: { Image(systemName:"ellipsis").frame(width:44,height:44) }
+            .accessibilityLabel("舞台菜单").accessibilityIdentifier("stage-menu")
+        }
+    }
+
+    private var transport:some View {
+        VStack(spacing:10) {
+            HStack {
+                Text(clock(session.position)).monospacedDigit()
+                Slider(value:Binding(get:{session.position},set:{session.seek($0)}),in:0...max(1,session.duration))
+                    .tint(Atmosphere.silver).accessibilityLabel("播放进度").accessibilityIdentifier("stage-progress")
+                Text(clock(session.duration)).monospacedDigit()
+            }.font(.caption2).foregroundStyle(Atmosphere.muted)
+            HStack(spacing:28) {
+                Button { console=true } label: { Image(systemName:"slider.vertical.3").frame(width:44,height:44) }.accessibilityLabel("混音控制")
+                Button { lastTouch=Date();if session.playing { session.pause() } else { session.start() } } label: {
+                    Image(systemName:session.playing ? "pause.fill" : "play.fill").font(.system(size:20,weight:.light))
+                        .frame(width:64,height:64).background(.white.opacity(0.06),in:Circle())
+                        .overlay(Circle().strokeBorder(Atmosphere.metal,lineWidth:1))
+                }.accessibilityLabel(session.playing ? "暂停舞台" : "开始舞台").accessibilityIdentifier("stage-play")
+                Button { session.finish();showingReport=true } label: { Image(systemName:"stop").frame(width:44,height:44) }.accessibilityLabel("结束并复盘")
+            }
+            Text(session.analyzing ? "AI 正在分析，舞台保持本地运行" : session.status)
+                .font(.system(size:10)).foregroundStyle(Atmosphere.muted).lineLimit(2).multilineTextAlignment(.center)
+        }.padding(.bottom,12)
+    }
+
+    private var mixingConsole:some View {
+        NavigationStack {
+            Form {
+                Section("声音") {
+                    LabeledContent("伴奏音量") { Slider(value:$session.accompanimentVolume,in:0...1) }
+                    Toggle("人声实时返送",isOn:$session.monitorEnabled)
+                    LabeledContent("返送音量") { Slider(value:$session.monitorVolume,in:0...0.3) }
+                    LabeledContent("房间混响") { Slider(value:$session.reverbAmount,in:0...0.3) }
+                    Text("手机自身外放：返送从低音量开始。出现回声或尖锐声时关闭返送；声线分析仍可继续。").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("光") { LabeledContent("亮度上限") { Slider(value:$session.brightness,in:0...1) } }
+                Section("实时测量") {
+                    LabeledContent("麦克风",value:session.hasMicrophone ? "正在收音" : "已关闭")
+                    LabeledContent("声线频率",value:session.vocal.pitch>0 ? "\(Int(session.vocal.pitch)) Hz" : "等待稳定声线")
+                    LabeledContent("置信度",value:"\(Int(session.vocal.confidence*100))%")
+                }
+            }.navigationTitle("声音与光").toolbar { Button("完成") { console=false } }
+        }.preferredColorScheme(.dark)
+    }
+    private var reportSheet:some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment:.leading,spacing:24) {
+                    Text("这一段，听见自己").font(Atmosphere.title(26))
+                    Text(session.report).font(.body).lineSpacing(7).textSelection(.enabled)
+                    Button(session.analyzing ? "分析中" : "用 AI 整理练习建议") { Task { await session.review(using:client) } }.disabled(session.analyzing)
+                    Text("发送内容为带时间戳的声线与电平指标。原始声音保留在本机音频链路中。").font(.footnote).foregroundStyle(.secondary)
+                }.padding(26)
+            }.navigationTitle("演唱复盘").toolbar { Button("完成") { showingReport=false } }
+        }.preferredColorScheme(.dark)
+    }
+    private var client:DirectorClient { let s=DirectorSettings.load();return .init(settings:s,key:DirectorKeychain.read(for:s.credentialID)) }
+    private func clock(_ value:Double)->String { String(format:"%02d:%02d",Int(value)/60,Int(value)%60) }
+}
+
+struct DirectorSettingsView: View {
+    @State private var settings=DirectorSettings.load()
+    @State private var key=""
+    @State private var message="密钥按接口地址保存在本机钥匙串。"
+    @State private var busy=false
+    @Environment(\.dismiss) private var dismiss
+    var body:some View {
+        NavigationStack {
+            Form {
+                Section("OpenAI 兼容接口") {
+                    TextField("HTTPS Base URL",text:$settings.baseURL).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    TextField("模型名称",text:$settings.model).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("API Key",text:$key).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("保存到本机") { save() }
+                    Button(busy ? "连接中" : "测试连接") {
+                        guard save() else { return };busy=true
+                        Task { do { try await DirectorClient(settings:settings,key:key).test();message="连接成功" } catch { message=error.localizedDescription };busy=false }
+                    }.disabled(busy)
+                    Text(message).font(.footnote)
+                }
+                Section("AI 的工作方式") {
+                    Text("导入歌词后按需生成情绪分镜，播放阶段使用本地时间轴。演唱结束后，AI 根据测量指标整理练习建议。")
+                    Text("首次使用先填写接口。未配置时可使用本地编排和本机测量。")
+                }.font(.footnote)
+            }.navigationTitle("AI 导演").toolbar { Button("完成") { dismiss() } }
+        }.preferredColorScheme(.dark)
+        .onAppear { key=DirectorKeychain.read(for:settings.credentialID) }
+        .onChange(of:settings.baseURL) { _,_ in key=DirectorKeychain.read(for:settings.credentialID) }
+    }
+    @discardableResult private func save()->Bool {
+        do { try DirectorKeychain.save(key.trimmingCharacters(in:.whitespacesAndNewlines),for:settings.credentialID);settings.save();message="已保存";return true }
+        catch { message=error.localizedDescription;return false }
+    }
+}

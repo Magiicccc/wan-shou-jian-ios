@@ -97,6 +97,27 @@ final class ManualControlUITests: XCTestCase {
         attach(app, name: "06-background-settings")
     }
 
+    func testKaraokeDemoAndAISettingsAreReachable() {
+        let app=XCUIApplication()
+        app.launchArguments=["--preview"]
+        app.launch()
+        XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10))
+        app.buttons["tab-3"].tap()
+        let play=app.buttons["stage-play"]
+        XCTAssertTrue(play.waitForExistence(timeout:5))
+        XCTAssertTrue(play.isHittable)
+        play.tap()
+        XCTAssertEqual(play.label,"暂停舞台")
+        let progress=app.sliders["stage-progress"]
+        progress.adjust(toNormalizedSliderPosition:0.55)
+        attach(app,name:"07-kinetic-stage")
+        play.tap()
+        app.buttons["stage-menu"].tap()
+        app.buttons["AI 接口设置"].tap()
+        XCTAssertTrue(app.secureTextFields["API Key"].waitForExistence(timeout:5))
+        attach(app,name:"08-ai-settings")
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let scroll = app.scrollViews.firstMatch
         let primary = app.buttons["primary-control"]

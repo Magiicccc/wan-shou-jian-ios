@@ -22,6 +22,7 @@ enum Atmosphere {
 struct RhythmHomeView: View {
     @ObservedObject var manager: LightstickManager
     @ObservedObject var session: RhythmSession
+    @ObservedObject var karaoke: KaraokeSession
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var tab = 0
     @State private var immersive = false
@@ -34,6 +35,7 @@ struct RhythmHomeView: View {
             Atmosphere.background.ignoresSafeArea()
             if tab == 0 { home }
             else if tab == 1 { devices }
+            else if tab == 3 { KaraokeView(session:karaoke) }
             else { settings }
         }
         .foregroundStyle(Atmosphere.silver)
@@ -165,16 +167,21 @@ struct RhythmHomeView: View {
     private var navigation: some View {
         HStack {
             navigationItem(0, "律动", "waveform")
+            navigationItem(3, "舞台", "music.mic")
             navigationItem(1, "设备", "antenna.radiowaves.left.and.right")
             navigationItem(2, "设置", "slider.horizontal.3")
         }
-        .padding(.horizontal, 34)
+        .padding(.horizontal, 24)
         .padding(.bottom, 4)
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5).padding(.horizontal, 26) }
     }
 
     private func navigationItem(_ index: Int, _ title: String, _ symbol: String) -> some View {
-        Button { tab = index } label: {
+        Button {
+            if index == 3 { session.stop() }
+            else if tab == 3 { karaoke.pause() }
+            tab = index
+        } label: {
             VStack(spacing: 5) {
                 Image(systemName: symbol).font(.system(size: 17, weight: .light))
                 Text(title).font(.system(size: 10)).tracking(2)
