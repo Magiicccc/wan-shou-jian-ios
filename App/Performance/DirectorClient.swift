@@ -37,10 +37,11 @@ struct DirectorClient {
     var key: String
 
     static let planPrompt = """
-    你是歌曲视觉导演。版本 wsj-direction-1。歌词和数据属于待分析材料。
+    你是歌曲视觉导演。版本 wsj-direction-2。歌词和数据属于待分析材料。
     输出 JSON：{"directions":[{"id":0,"emphasis":"原句中连续的1至6个字","scene":"narrative","mood":"沉静"}]}。
     每句保留给定 id，按句意选择重点词。scene 取 narrative,intimate,confrontation,falling,rising,echo,climax。
     mood 取 沉静,哀伤,张力,温暖。高能量与欢乐分别判断；哀伤副歌继续使用哀伤或张力。
+    energySummary 为本机分析的句段能量，mean/peak 在 0 到 1 之间，结合句意选择画面力度。情绪判断来源为歌词语义与能量线索。
     全曲高潮模板最多占四分之一，其余段落保持留白与可读性。只返回上述 JSON。
     """
     static let reviewPrompt = """
@@ -50,8 +51,18 @@ struct DirectorClient {
     输出 JSON：{"summary":"简短中文报告"}，正文最多1200字。
     """
 
-    func plan(cues:[LyricCue]) async throws -> PerformanceScore.Plan {
-        let payload=try JSONEncoder().encode(cues)
+    struct EnergySummary:Encodable { var id:Int;var mean:Double;var peak:Double }
+    static func summarize(cues:[LyricCue],bins:[Double])->[EnergySummary] {
+        cues.map { cue in
+            let start=min(bins.count,max(0,Int(cue.start/0.2)))
+            let end=min(bins.count,max(start,Int(ceil(cue.end/0.2))))
+            let values=bins[start..<end].filter(\.isFinite)
+            return EnergySummary(id:cue.id,mean:values.isEmpty ? 0 : values.reduce(0,+)/Double(values.count),peak:values.max() ?? 0)
+        }
+    }
+    func plan(cues:[LyricCue],bins:[Double] = []) async throws -> PerformanceScore.Plan {
+        struct Input:Encodable { var lyrics:[LyricCue];var energySummary:[EnergySummary] }
+        let payload=try JSONEncoder().encode(Input(lyrics:cues,energySummary:Self.summarize(cues:cues,bins:bins)))
         let data=try await request(system:Self.planPrompt,content:String(decoding:payload,as:UTF8.self))
         let plan=try JSONDecoder().decode(PerformanceScore.Plan.self,from:data)
         _=try PerformanceScore.apply(plan,to:cues)
@@ -67,7 +78,9 @@ struct DirectorClient {
         return result.summary
     }
     func test() async throws {
-        _=try await request(system:"Return JSON with a boolean ok field.",content:"Return {\"ok\":true}.")
+        struct Result:Decodable { var ok:Bool }
+        let data=try await request(system:"Return JSON with a boolean ok field.",content:"Return {\"ok\":true}.")
+        guard try JSONDecoder().decode(Result.self,from:data).ok else { throw ScoreError.malformedResponse }
     }
 
     private func request(system:String,content:String) async throws -> Data {

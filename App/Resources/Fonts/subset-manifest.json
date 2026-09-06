@@ -7,9 +7,9 @@
   "fonttools_version": "4.60.0",
   "postscript_name": "WSJDisplay-ExtraLight",
   "source_file_count": 16,
-  "codepoint_count": 601,
-  "glyph_count": 1327,
-  "subset_bytes": 357028,
-  "subset_sha256": "238e63a4427e4a292e1f4fd38e036f4561d53f972b36f2fd246249f7e44424c7",
-  "codepoints_sha256": "222ea035dc0bf525a4948421ba04ced3dcb00339ecc2fc2fe02abbe02457c17d"
+  "codepoint_count": 604,
+  "glyph_count": 1332,
+  "subset_bytes": 358096,
+  "subset_sha256": "34ed832e5f3c326d067d5da18d7dc946f1861b480b87624eb009f08b2d8f6d72",
+  "codepoints_sha256": "86c4215971f2e5d9acb9cd21905f78822ec8ebe795c22688354518558feef028"
 }

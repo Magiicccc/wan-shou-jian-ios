@@ -59,6 +59,7 @@ private struct FoxRealityView: UIViewRepresentable {
         key.look(at:[0,0,0],from:[-2,3,3],relativeTo:nil);anchor.addChild(key)
         let fill=DirectionalLight();fill.light.intensity=550;fill.light.color=UIColor(red:0.55,green:0.66,blue:1,alpha:1)
         fill.look(at:[0,0,0],from:[2,1,-2],relativeTo:nil);anchor.addChild(fill)
+        context.coordinator.key=key;context.coordinator.fill=fill
         view.scene.addAnchor(anchor)
         context.coordinator.load=Entity.loadAsync(contentsOf:url).receive(on:DispatchQueue.main).sink(
             receiveCompletion: { result in
@@ -76,6 +77,11 @@ private struct FoxRealityView: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view:ARView,context:Context) {
+        let rgb=light.color
+        let peak=Double(max(1,max(rgb.red,max(rgb.green,rgb.blue))))
+        context.coordinator.key?.light.color=UIColor(red:0.62+0.38*Double(rgb.red)/peak,green:0.62+0.38*Double(rgb.green)/peak,blue:0.62+0.38*Double(rgb.blue)/peak,alpha:1)
+        context.coordinator.key?.light.intensity=active ? Float(550+light.energy*1250) : 120
+        context.coordinator.fill?.light.intensity=active ? Float(220+light.beat*300) : 75
         guard let pivot=context.coordinator.pivot,let model=context.coordinator.model else { return }
         let amplitude:Float=active && motion ? Float(0.025+light.energy*0.055) : 0
         pivot.orientation=simd_quatf(angle:Float(sin(time*0.48))*amplitude,axis:[0,1,0]) * simd_quatf(angle:Float(sin(time*0.7))*amplitude*0.25,axis:[1,0,0])
@@ -89,6 +95,8 @@ private struct FoxRealityView: UIViewRepresentable {
         var pivot:Entity?
         var model:Entity?
         var load:AnyCancellable?
+        var key:DirectionalLight?
+        var fill:DirectionalLight?
         func setBlink(_ closed:Bool) {
             for name in ["Head","DirectionalFur"] {
                 model?.findEntity(named:name)?.isEnabled = !closed

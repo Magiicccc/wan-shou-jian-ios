@@ -2,6 +2,13 @@ import XCTest
 @testable import WanShouJian
 
 final class PerformanceScoreTests:XCTestCase {
+    func testEnergySummaryUsesMatchingPhraseAndHandlesMissingAudio() {
+        var cue=PerformanceScore.demo[0];cue.start=0.2;cue.end=0.6
+        let values=DirectorClient.summarize(cues:[cue],bins:[0.1,0.4,0.8,0.2])
+        XCTAssertEqual(values[0].mean,0.6,accuracy:0.001)
+        XCTAssertEqual(values[0].peak,0.8)
+        XCTAssertEqual(DirectorClient.summarize(cues:[cue],bins:[])[0].mean,0)
+    }
     func testLRCTimestampsRepeatedTagsAndOffset() throws {
         let score=try PerformanceScore.parseLRC("[offset:100]\n[00:01.50][00:08.5]Hello light\n[00:04]Moon",duration:12)
         XCTAssertEqual(score.count,3)

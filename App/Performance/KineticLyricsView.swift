@@ -27,7 +27,7 @@ struct KineticLyricsView: View {
                             HStack(alignment:.center,spacing:18) {
                                 Text(parts.first ?? "").font(Atmosphere.title(side*0.065)).foregroundStyle(Atmosphere.muted)
                                 Text(emphasis.map(String.init).joined(separator:"\n"))
-                                    .font(Atmosphere.title(min(62,side*0.15))).lineSpacing(0).foregroundStyle(accent)
+                                    .font(Atmosphere.title(min(62,side*0.15,(geometry.size.height-20)/CGFloat(max(1,emphasis.count))/1.4))).lineSpacing(0).foregroundStyle(accent)
                                     .scaleEffect(reduced ? 1 : 1+energy*0.045)
                                 Text(parts.dropFirst().joined(separator:emphasis)).font(Atmosphere.title(side*0.065)).foregroundStyle(Atmosphere.muted)
                             }

@@ -238,7 +238,7 @@ final class KaraokeSession: ObservableObject {
         guard !analyzing,!cues.isEmpty else { return };analyzing=true;defer { analyzing=false }
         let original=cues;let token=importGeneration
         do {
-            let plan=try await client.plan(cues:original)
+            let plan=try await client.plan(cues:original,bins:bins)
             guard token==importGeneration,cues==original else { return }
             cues=try PerformanceScore.apply(plan,to:original);saveSong();status="AI 情绪与歌词分镜已应用。"
         } catch { status=error.localizedDescription }
