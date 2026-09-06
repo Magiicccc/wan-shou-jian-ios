@@ -14,7 +14,7 @@ enum Atmosphere {
     }
 
     static func title(_ size: CGFloat) -> Font {
-        .custom("Songti SC", size: size, relativeTo: .title2)
+        .custom("WSJDisplay-ExtraLight", size: size, relativeTo: .title2)
     }
 }
 
@@ -81,7 +81,9 @@ struct RhythmHomeView: View {
                     .padding(.bottom, 20)
                     connectionStrip
                     FoxVisualView(light: session.light, active: session.isRunning && (manager.canControl || preview))
-                        .frame(height: max(215, min(355, geometry.size.height * 0.48)))
+                        .frame(height: geometry.size.height < 560
+                               ? max(170, geometry.size.height * 0.34)
+                               : min(355, geometry.size.height * 0.48))
                         .padding(.top, 6)
                         .accessibilityLabel("白狐光效，\(session.light.stage.rawValue)")
                         .accessibilityIdentifier("fox-visual")
@@ -341,24 +343,15 @@ struct ImmersiveRhythmView: View {
         GeometryReader { geometry in
             ZStack {
                 Color.black.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    FoxVisualView(light: session.light, active: session.isRunning && (manager.canControl || preview))
-                        .frame(width: geometry.size.width * 0.94, height: geometry.size.width * 0.96)
-                        .onLongPressGesture(minimumDuration: 1.5) { stop() }
-                        .accessibilityLabel("沉浸白狐，\(session.light.stage.rawValue)")
-                        .accessibilityAction(named: Text("停止律动")) { stop() }
-                        .accessibilityIdentifier("immersive-fox")
-                    Text(session.light.stage.rawValue)
-                        .font(Atmosphere.title(22)).tracking(4)
-                        .foregroundStyle(Atmosphere.silver.opacity(controls ? 0.85 : 0))
-                        .padding(.top, 18)
-                    Text(session.message)
-                        .font(.caption).multilineTextAlignment(.center)
-                        .foregroundStyle(Atmosphere.muted.opacity(controls ? 1 : 0))
-                        .padding(.horizontal, 28).padding(.top, 9)
-                    Spacer(minLength: 0)
-                }
+                FoxVisualView(light: session.light, active: session.isRunning && (manager.canControl || preview))
+                    .frame(width: geometry.size.width * 0.94,
+                           height: min(geometry.size.width * 0.96, geometry.size.height * 0.47))
+                    .contentShape(Rectangle())
+                    .onLongPressGesture(minimumDuration: 1.5) { stop() }
+                    .accessibilityLabel("沉浸白狐，\(session.light.stage.rawValue)")
+                    .accessibilityAction(named: Text("停止律动")) { stop() }
+                    .accessibilityIdentifier("immersive-fox")
+                    .position(x: geometry.size.width / 2, y: geometry.size.height * 0.36)
                 if controls || voiceOver {
                     VStack {
                         HStack {
@@ -370,6 +363,15 @@ struct ImmersiveRhythmView: View {
                         }.padding(.horizontal, 16)
                         Spacer()
                         VStack(spacing: 14) {
+                            VStack(spacing: 7) {
+                                Text(session.light.stage.rawValue)
+                                    .font(Atmosphere.title(22)).tracking(4)
+                                    .foregroundStyle(session.light.crown > 0.25 ? Atmosphere.gold : Atmosphere.silver)
+                                    .accessibilityIdentifier("immersive-stage")
+                                Text(session.message)
+                                    .font(.caption).multilineTextAlignment(.center)
+                                    .foregroundStyle(Atmosphere.muted)
+                            }
                             RhythmAdjustments(session: session, compact: true)
                             HStack(spacing: 20) {
                                 Button { session.recalibrate(); showControls() } label: {

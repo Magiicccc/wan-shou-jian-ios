@@ -24,6 +24,9 @@ final class ManualControlUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.buttons["wake-rhythm"].waitForExistence(timeout: 10))
+        let homeBrightness = app.sliders["rhythm-brightness"]
+        XCTAssertTrue(homeBrightness.isHittable)
+        XCTAssertLessThan(homeBrightness.frame.maxY, app.buttons["wake-rhythm"].frame.minY)
         attach(app, name: "01-rhythm-home")
         app.buttons["tab-1"].tap()
         app.buttons["open-manual"].tap()
@@ -70,6 +73,8 @@ final class ManualControlUITests: XCTestCase {
         let stop = app.buttons["stop-rhythm"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["合成音乐预览"].exists)
+        XCTAssertLessThan(app.staticTexts["immersive-stage"].frame.maxY,
+                          app.sliders["rhythm-brightness"].frame.minY)
         attach(app, name: "05-immersive-preview")
         stop.tap()
         XCTAssertTrue(wake.waitForExistence(timeout: 5))

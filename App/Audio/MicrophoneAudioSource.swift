@@ -65,8 +65,8 @@ private final class AudioProcessingGate: @unchecked Sendable {
             let duration = accumulatedDuration
             accumulatedDuration = 0
             Task { @MainActor [self] in
-                defer { finish() }
-                guard isActive() else { return }
+                defer { self.finish() }
+                guard self.isActive() else { return }
                 deliver(features, duration)
             }
         }

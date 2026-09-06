@@ -1,0 +1,15 @@
+{
+  "upstream_tag": "Serif2.003",
+  "font_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-ExtraLight.otf",
+  "license_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/LICENSE",
+  "source_font_sha256": "12270613d011f70c0e1875affc845ba272e0ce1d78ca9a4398dc34cc67984b62",
+  "license_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+  "fonttools_version": "4.60.0",
+  "postscript_name": "WSJDisplay-ExtraLight",
+  "source_file_count": 10,
+  "codepoint_count": 461,
+  "glyph_count": 1095,
+  "subset_bytes": 283024,
+  "subset_sha256": "f6aa925284a3dbfbb549cbb7279c996492aab4074d4781bebe8d997085313b0e",
+  "codepoints_sha256": "c0aaf5cd3bba3add860dc54f9aeb3ede8ef949eac9ac68e2ee6ad984fbae2f91"
+}

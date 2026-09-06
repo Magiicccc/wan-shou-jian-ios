@@ -28,6 +28,7 @@ targets:
         NSBluetoothAlwaysUsageDescription: 用于连接你选择的宝宝剑，并调节颜色与亮度。
         NSMicrophoneUsageDescription: 用于在本机实时分析外放音乐的节奏，驱动宝宝剑和白狐光效；声音仅在内存中处理。
         UIBackgroundModes: [audio, bluetooth-central]
+        UIAppFonts: [WSJDisplay-ExtraLight.otf]
         KnownDeviceMACSHA256: $(LIGHTSTICK_MAC_SHA256)
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
     settings:
