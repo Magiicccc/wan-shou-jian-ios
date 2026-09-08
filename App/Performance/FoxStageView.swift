@@ -139,7 +139,7 @@ private struct FoxRealityView: UIViewRepresentable {
                     // The private asset carries baked studio appearance in its diffuse texture.
                     var unlit = UnlitMaterial()
                     unlit.color = .init(tint: pbr.baseColor.tint, texture: pbr.baseColor.texture)
-                    unlit.faceCulling = .none
+                    if #available(iOS 18.0, *) { unlit.faceCulling = .none }
                     return unlit
                 }
                 part.model = component
