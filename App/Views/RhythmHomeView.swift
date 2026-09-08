@@ -82,7 +82,7 @@ struct RhythmHomeView: View {
                     .padding(.top, 15)
                     .padding(.bottom, 20)
                     connectionStrip
-                    FoxVisualView(light: session.light, active: session.isRunning && (manager.canControl || preview))
+                    FoxRhythmStageView(light: session.light, active: session.isRunning && (manager.canControl || preview))
                         .frame(height: geometry.size.height < 560
                                ? max(170, geometry.size.height * 0.34)
                                : min(355, geometry.size.height * 0.48))
@@ -351,7 +351,7 @@ struct ImmersiveRhythmView: View {
         GeometryReader { geometry in
             ZStack {
                 Color.black.ignoresSafeArea()
-                FoxVisualView(light: session.light, active: session.isRunning && (manager.canControl || preview))
+                FoxRhythmStageView(light: session.light, active: session.isRunning && (manager.canControl || preview))
                     .frame(width: geometry.size.width * 0.94,
                            height: min(geometry.size.width * 0.96, geometry.size.height * 0.47))
                     .contentShape(Rectangle())

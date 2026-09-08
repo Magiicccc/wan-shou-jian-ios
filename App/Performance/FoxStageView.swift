@@ -3,17 +3,34 @@ import SwiftUI
 import UIKit
 import Combine
 
+struct FoxRhythmStageView: View {
+    var light: LightState
+    var active: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30,
+                                paused: !active || scenePhase != .active || reduceMotion)) { tick in
+            FoxStageView(light: light, time: tick.date.timeIntervalSinceReferenceDate,
+                         active: active)
+        }
+    }
+}
+
 struct FoxStageView: View {
     var light: LightState
     var time: Double
     var active: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @State private var modelFailed = false
     private var modelURL: URL? { Bundle.main.url(forResource:"fox",withExtension:"usdz",subdirectory:"PrivateVisuals") }
     var body: some View {
         ZStack {
-            if let url=modelURL {
-                FoxRealityView(url:url,light:light,time:time,active:active && scenePhase == .active,motion:!reduceMotion)
+            if let url=modelURL, !modelFailed {
+                FoxRealityView(url:url,light:light,time:time,active:active && scenePhase == .active,motion:!reduceMotion,
+                               onFailure: { modelFailed = true })
             } else {
                 FoxVisualView(light:light,active:active)
             }
@@ -33,7 +50,7 @@ struct FoxStageView: View {
                 }
             }.allowsHitTesting(false)
         }
-        .accessibilityLabel(modelURL == nil ? "白狐资源预览" : "三维白狐舞台")
+        .accessibilityLabel(modelURL == nil || modelFailed ? "白狐资源预览" : "三维白狐舞台")
     }
     private func normalized(_ rgb:LightRGB)->LightRGB {
         let peak=max(rgb.red,max(rgb.green,rgb.blue))
@@ -48,6 +65,7 @@ private struct FoxRealityView: UIViewRepresentable {
     var time: Double
     var active: Bool
     var motion: Bool
+    var onFailure: () -> Void
     func makeCoordinator()->Coordinator { Coordinator() }
     func makeUIView(context:Context)->ARView {
         let view=ARView(frame:.zero,cameraMode:.nonAR,automaticallyConfigureSession:false)
@@ -63,7 +81,7 @@ private struct FoxRealityView: UIViewRepresentable {
         view.scene.addAnchor(anchor)
         context.coordinator.load=Entity.loadAsync(contentsOf:url).receive(on:DispatchQueue.main).sink(
             receiveCompletion: { result in
-                if case .failure = result { view.accessibilityLabel="三维模型加载失败" }
+                if case .failure = result { onFailure() }
             }, receiveValue: { entity in
                 let bounds=entity.visualBounds(relativeTo:nil)
                 let dimension=max(bounds.extents.x,max(bounds.extents.y,bounds.extents.z))
@@ -72,6 +90,7 @@ private struct FoxRealityView: UIViewRepresentable {
                 entity.scale *= scale;entity.position = -bounds.center*scale
                 pivot.addChild(entity);anchor.addChild(pivot)
                 context.coordinator.pivot=pivot;context.coordinator.model=entity
+                context.coordinator.bakedParts = FoxModelAppearance.prepare(entity)
                 context.coordinator.setBlink(true)
             })
         return view
@@ -89,6 +108,8 @@ private struct FoxRealityView: UIViewRepresentable {
             model.findEntity(named:"Ear_"+label)?.orientation=simd_quatf(angle:Float(light.beat)*amplitude*(label == "L" ? 1 : -1),axis:[0,0,1])
         }
         context.coordinator.setBlink(!active || light.eyeOpening<0.25 || (motion && time.truncatingRemainder(dividingBy:5.7)>5.54))
+        FoxModelAppearance.tint(context.coordinator.bakedParts, color: rgb,
+                               energy: light.energy, active: active)
     }
     static func dismantleUIView(_ view:ARView,coordinator:Coordinator) { coordinator.load?.cancel();view.scene.anchors.removeAll() }
     @MainActor final class Coordinator {
@@ -97,11 +118,53 @@ private struct FoxRealityView: UIViewRepresentable {
         var load:AnyCancellable?
         var key:DirectionalLight?
         var fill:DirectionalLight?
+        var bakedParts: [ModelEntity] = []
         func setBlink(_ closed:Bool) {
             for name in ["Head","DirectionalFur"] {
                 model?.findEntity(named:name)?.isEnabled = !closed
                 model?.findEntity(named:name+"Closed")?.isEnabled = closed
             }
+        }
+    }
+}
+
+@MainActor enum FoxModelAppearance {
+    static func prepare(_ root: Entity) -> [ModelEntity] {
+        guard root.findEntity(named: "MobileFoxRoot") != nil else { return [] }
+        var result: [ModelEntity] = []
+        func visit(_ entity: Entity) {
+            if let part = entity as? ModelEntity, var component = part.model {
+                component.materials = component.materials.map { material in
+                    guard let pbr = material as? PhysicallyBasedMaterial else { return material }
+                    // The private asset carries baked studio appearance in its diffuse texture.
+                    var unlit = UnlitMaterial()
+                    unlit.color = .init(tint: pbr.baseColor.tint, texture: pbr.baseColor.texture)
+                    unlit.faceCulling = .none
+                    return unlit
+                }
+                part.model = component
+                result.append(part)
+            }
+            for child in entity.children { visit(child) }
+        }
+        visit(root)
+        return result
+    }
+
+    static func tint(_ parts: [ModelEntity], color: LightRGB, energy: Double, active: Bool) {
+        let level = active ? 0.58 + min(1, max(0, energy)) * 0.42 : 0.38
+        let peak = Double(max(1, max(color.red, max(color.green, color.blue))))
+        let tint = UIColor(red: level * (0.82 + 0.18 * Double(color.red) / peak),
+                           green: level * (0.82 + 0.18 * Double(color.green) / peak),
+                           blue: level * (0.82 + 0.18 * Double(color.blue) / peak), alpha: 1)
+        for part in parts {
+            guard var component = part.model else { continue }
+            component.materials = component.materials.map { material in
+                guard var unlit = material as? UnlitMaterial else { return material }
+                unlit.color.tint = tint
+                return unlit
+            }
+            part.model = component
         }
     }
 }

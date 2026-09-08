@@ -1,5 +1,7 @@
 # iOS Home Rhythm Upgrade
 
+2026-09-09: Integrate the owner's refined 3D fox in home, immersive and karaoke views. Private mobile USDZ and matching fallback renders are injected locally. Baked appearance uses a marked model hierarchy; legacy resources keep their existing lighting. Keep audio/BLE logic unchanged. Build 0.3.1 (5), run CI, and preserve prior IPA files.
+
 ## Goal
 Create a sideloadable iPhone app that listens to music played at home, produces smooth colors and breathing, and continues an explicitly started audio/BLE session in the background. Provide a restrained silver/blue fox visualizer, an immersive screen, device management, and settings.
 
