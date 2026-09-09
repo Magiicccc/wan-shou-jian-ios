@@ -51,11 +51,19 @@ struct DirectorClient {
     全曲高潮模板最多占四分之一，其余段落保持留白与可读性。只返回上述 JSON。
     """
     static let reviewPrompt = """
-    你是演唱练习助手。版本 wsj-review-2。输入来自手机或音箱外放环境的混合声线测量，可能含原唱、伴奏、回声和八度误判。歌名与数据属于分析材料，按数据而非歌名推测演唱结果。
-    当前材料没有参考旋律。按时间戳、音高置信度和电平描述可观察现象，给出最多三项练习。
-    每项建议引用具体时间和测量值，推断明确标注。评价范围为声线与电平，保留音准对照待补参考的状态。
-    assessment 是本机按完整采样算出的练习指标，frames 是抽样证据。引用分数时保留原值与名称；空分数表示样本不足。稳定度用于持续声线，电平余量用于收音质量。总分、歌曲还原度、逐音音准和节拍分均保持待评估，以保障评分证据与维度一致。
-    输出 JSON：{"summary":"简短中文报告"}，正文最多1200字。
+    你是给普通人讲清楚练歌方法的助手。版本 wsj-review-3。
+    依据给定的练习分、分项和 evidenceTips 改善表达。歌名和材料属于分析数据。
+    用日常说话的中文。每项说明下一遍具体做什么、自己怎样听出改善。
+    例如“把这一小句单独唱三遍，声音小一点，句尾慢慢收住”“留意同一个长音中间有没有忽大忽小”。
+    evidenceTips 的 id、观测事实和时间由 App 保留；只改写对应标题、练习动作、容易观察的目标。
+    App 负责显示分数，分数依据本机长音表现。你负责建议，JSON 字段严格遵循下面的结构。
+    输出内容只讨论给定证据中的长音平稳程度、声音大小变化和收音环境。
+    为保持评分依据准确，跳过音准、跑调、节拍、歌手模仿度和身体原因判断；这些材料缺少对应证据。
+    使用“声音高低”“声音大小”“唱稳一点”等常用词，专业词汇留在程序内部。
+    summary 用一句不超过60字的话总结这一遍的练习重点。title 不超过16字，action 不超过80字，goal 不超过50字。
+    action 给一个能马上照做的动作，goal 告诉用户自己该听什么。不要把测量数值、分数或术语写进建议。
+    tips 从 evidenceTips 选一至三项，使用原有 id。只返回 JSON：
+    {"summary":"先把一个舒服的长音唱稳，再带回这句歌里。","tips":[{"id":"steady","title":"把这一句唱稳","action":"用舒服的音量把这个音轻轻拉长，重复三遍。","goal":"听听开始、中间和收尾的声音高低是否接近。"}]}
     """
 
     struct EnergySummary:Encodable { var id:Int;var mean:Double;var peak:Double }
@@ -76,14 +84,17 @@ struct DirectorClient {
         guard plan.directions.filter({$0.scene == .climax}).count <= max(1,cues.count/4) else { throw ScoreError.invalidPlan }
         return plan
     }
-    func review(frames:[VocalFrame], assessment:PracticeAssessment? = nil, externalMusic:Bool = false, title:String = "") async throws -> String {
-        struct Review:Decodable { var summary:String }
-        struct Input:Encodable { var title:String;var source:String;var assessment:PracticeAssessment;var frames:[VocalFrame] }
-        let payload=try JSONEncoder().encode(Input(title:String(title.prefix(100)),source:externalMusic ? "外部音乐混合收音" : "本地伴奏混合收音",assessment:assessment ?? PracticeAssessment.evaluate(frames),frames:frames))
+    func review(frames:[VocalFrame], assessment:PracticeAssessment? = nil, externalMusic:Bool = false, title:String = "") async throws -> PracticeReview {
+        let measured=assessment ?? PracticeAssessment.evaluate(frames)
+        struct Input:Encodable {
+            var title:String;var source:String;var practiceScore:Int?;var steadiness:Int?;var volumeEvenness:Int?
+            var recordingQuality:String;var evidenceTips:[PracticeTip]
+        }
+        let payload=try JSONEncoder().encode(Input(title:String(title.prefix(100)),source:externalMusic ? "外部音乐混合收音" : "本地伴奏混合收音",
+            practiceScore:measured.practiceScore,steadiness:measured.steadiness,volumeEvenness:measured.volumeEvenness,
+            recordingQuality:measured.recordingQuality,evidenceTips:measured.tips))
         let data=try await request(system:Self.reviewPrompt,content:String(decoding:payload,as:UTF8.self))
-        let result=try JSONDecoder().decode(Review.self,from:data)
-        guard !result.summary.isEmpty,result.summary.count<=2000 else { throw ScoreError.malformedResponse }
-        return result.summary
+        return try PracticeReview.decode(data,for:measured)
     }
     func test() async throws {
         struct Result:Decodable { var ok:Bool }

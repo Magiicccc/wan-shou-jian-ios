@@ -140,30 +140,58 @@ struct KaraokeView: View {
         }.preferredColorScheme(.dark)
     }
     private var reportSheet:some View {
-        NavigationStack {
+        let result=session.assessment
+        let tips=session.coaching?.applying(to:result.tips) ?? result.tips
+        return NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
                     Text("这一段，听见自己").font(Atmosphere.title(26))
                     Text(session.title).font(.subheadline).foregroundStyle(Atmosphere.muted)
+                    VStack(alignment:.leading,spacing:12) {
+                        Text("本次练习参考分 · 长音表现").font(.system(size:12)).foregroundStyle(Atmosphere.muted)
+                        HStack(alignment:.firstTextBaseline,spacing:8) {
+                            Text(result.practiceScore.map(String.init) ?? "待评分")
+                                .font(.system(size:result.practiceScore==nil ? 34 : 64,weight:.ultraLight,design:.rounded))
+                                .monospacedDigit().accessibilityIdentifier("practice-total")
+                            if result.practiceScore != nil { Text("/ 100").font(.system(size:16)).foregroundStyle(Atmosphere.muted) }
+                        }
+                        Text(result.headline).font(.system(size:15))
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(22)
+                        .background(LinearGradient(colors:[.white.opacity(0.10),.white.opacity(0.025)],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:20))
                     HStack(spacing:12) {
-                        scoreCard("声线稳定度",value:session.assessment.steadiness)
-                        scoreCard("电平余量",value:session.assessment.levelHeadroom)
+                        scoreCard("长音稳不稳",value:result.practiceScore == nil ? nil : result.steadiness)
+                        scoreCard("音量平不平",value:result.practiceScore == nil ? nil : result.volumeEvenness)
                     }
-                    HStack {
-                        Label("\(session.assessment.validSamples) 个有效采样",systemImage:"waveform.path")
-                        Spacer()
-                        Text("\(Int(session.assessment.measuredSeconds)) 秒").monospacedDigit()
-                    }.font(.caption).foregroundStyle(Atmosphere.muted)
-                    Text(session.evidence.isEmpty ? "开始一次演唱，让手机听到持续的声音，再回到这里查看练习参考。" : "这次练习的参考分来自手机收音。靠近麦克风、降低原唱音量，有助于观察自己的声线变化。")
-                        .font(.system(size:14)).lineSpacing(5).foregroundStyle(Atmosphere.muted)
+                    Label(result.recordingQuality,systemImage:"mic").font(.system(size:13)).foregroundStyle(Atmosphere.muted)
+                    Text("下一遍，先练这几处").font(Atmosphere.title(23))
+                    if let coaching=session.coaching {
+                        Text(coaching.summary).font(.system(size:14)).foregroundStyle(Atmosphere.muted).lineSpacing(5)
+                    }
+                    ForEach(tips) { tip in
+                        VStack(alignment:.leading,spacing:12) {
+                            Text(tip.timeLabel).font(.system(size:11)).foregroundStyle(Atmosphere.muted)
+                            Text(tip.title).font(.system(size:18,weight:.medium))
+                            Text(tip.observation).font(.system(size:14)).foregroundStyle(Atmosphere.muted).lineSpacing(4)
+                            Text("怎么练").font(.system(size:12,weight:.semibold)).foregroundStyle(Atmosphere.ice)
+                            Text(tip.action).font(.system(size:15)).lineSpacing(5)
+                            Text("自己听什么：\(tip.goal)").font(.system(size:13)).foregroundStyle(Atmosphere.muted).lineSpacing(4)
+                        }.frame(maxWidth:.infinity,alignment:.leading).padding(18)
+                            .background(.white.opacity(0.035),in:RoundedRectangle(cornerRadius:16))
+                            .accessibilityIdentifier("practice-tip-\(tip.id)")
+                    }
                     Button { Task { await session.review(using:client) } } label: {
-                        HStack { Image(systemName:"sparkles");Text(session.analyzing ? "正在整理练习建议" : "AI 解读这一段");Spacer();Image(systemName:"arrow.up.right") }
+                        HStack { Image(systemName:"sparkles");Text(session.analyzing ? "正在整理练习建议" : "让 AI 把练法讲得更具体");Spacer();Image(systemName:"arrow.up.right") }
                             .padding(18).background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:16))
                     }.disabled(session.analyzing || session.isSessionActive || session.evidence.isEmpty)
-                    DisclosureGroup("测量依据与完整复盘") {
+                    if !session.coachingStatus.isEmpty { Text(session.coachingStatus).font(.footnote).foregroundStyle(Atmosphere.muted) }
+                    DisclosureGroup("怎么看这个分数") {
                         Text(session.report).font(.system(size:14)).lineSpacing(6).textSelection(.enabled).padding(.top,12)
                     }.font(.subheadline)
-                    Text("发送内容为带时间戳的声线与电平指标。原始声音保留在本机音频链路中。").font(.footnote).foregroundStyle(.secondary)
+                    Text("本次分数帮助比较长音练习；手机也会收到伴奏与原唱。AI 收到分项分数和已测到的片段说明，原始声音留在本机。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if ProcessInfo.processInfo.arguments.contains("--preview") {
+                        Button("查看评分示例") { session.loadReviewPreview() }.accessibilityIdentifier("practice-preview")
+                    }
                 }.padding(26)
             }.modifier(StudioSurface()).navigationTitle("演唱复盘").toolbar { Button("完成") { showingReport=false } }
         }.preferredColorScheme(.dark)
@@ -178,7 +206,7 @@ struct KaraokeView: View {
                     LabeledContent("选择播放设备") { AudioOutputPicker().frame(width:44,height:44) }
                 }
                 Section("评分范围") {
-                    Text("提供声线稳定度、电平参考及 AI 练习建议。选择伴奏版、降低音箱音量并靠近手机，有助于减少原唱对测量的影响。")
+                    Text("唱完可查看长音练习参考分，了解声音稳不稳、大小是否均匀，并看到下一遍怎么练。选择伴奏版、降低音箱音量并靠近手机，有助于听清自己的声音。")
                 }
             }
             .safeAreaInset(edge:.bottom) {
@@ -199,7 +227,7 @@ struct KaraokeView: View {
         VStack(alignment:.leading,spacing:16) {
             Text(title).font(.system(size:12)).foregroundStyle(Atmosphere.muted)
             Text(value.map(String.init) ?? "待测").font(.system(size:value==nil ? 24 : 38,weight:.light,design:.rounded)).monospacedDigit()
-            Text(value==nil ? "等待有效收音" : "练习参考 / 100").font(.system(size:10)).foregroundStyle(Atmosphere.muted)
+            Text(value==nil ? "再录一小段" : "练习参考 / 100").font(.system(size:10)).foregroundStyle(Atmosphere.muted)
         }.frame(maxWidth:.infinity,alignment:.leading).padding(18)
             .background(.white.opacity(0.045),in:RoundedRectangle(cornerRadius:18))
             .overlay(RoundedRectangle(cornerRadius:18).strokeBorder(.white.opacity(0.07)))

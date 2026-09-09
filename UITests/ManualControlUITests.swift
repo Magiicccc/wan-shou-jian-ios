@@ -205,6 +205,30 @@ final class ManualControlUITests: XCTestCase {
         attach(app,name:"19-sync-timeout-readable")
     }
 
+    func testPracticeReportShowsScoreAndPlainLanguageActions() {
+        let app=XCUIApplication()
+        app.launchArguments=["--preview"]
+        app.launch()
+        XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10))
+        app.buttons["tab-3"].tap()
+        app.buttons["external-music"].tap()
+        app.buttons["external-start"].tap()
+        XCTAssertTrue(app.buttons["stage-finish"].waitForExistence(timeout:5))
+        app.buttons["stage-finish"].tap()
+        let preview=app.buttons["practice-preview"]
+        for _ in 0..<8 { if preview.isHittable { break };app.swipeUp() }
+        XCTAssertTrue(preview.isHittable);preview.tap()
+        for _ in 0..<8 { if app.staticTexts["practice-total"].isHittable { break };app.swipeDown() }
+        XCTAssertTrue(app.staticTexts["practice-total"].exists)
+        XCTAssertNotEqual(app.staticTexts["practice-total"].label,"待评分")
+        XCTAssertTrue(app.staticTexts["长音稳不稳"].exists)
+        attach(app,name:"20-practice-score")
+        for _ in 0..<5 { if app.staticTexts["怎么练"].firstMatch.isHittable { break };app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["怎么练"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["电平余量"].exists)
+        attach(app,name:"21-practice-plain-advice")
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let scroll = app.scrollViews.firstMatch
         let primary = app.buttons["primary-control"]

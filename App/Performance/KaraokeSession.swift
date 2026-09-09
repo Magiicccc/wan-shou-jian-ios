@@ -38,7 +38,9 @@ final class KaraokeSession: ObservableObject {
     @Published private(set) var energy = 0.0
     @Published private(set) var light = LightState.idle
     @Published private(set) var status = "原创器乐与歌词演示 · 句级编排"
-    @Published private(set) var report = "演唱结束后，查看本机声线测量与练习建议。"
+    @Published private(set) var report = "唱完后，看看这一遍的分数和下一遍怎么练。"
+    @Published private(set) var coaching:PracticeReview?
+    @Published private(set) var coachingStatus=""
     @Published private(set) var analyzing = false
     @Published private(set) var hasMicrophone = false
     @Published var accompanimentVolume = 0.45 { didSet { player?.volume=Float(accompanimentVolume) } }
@@ -211,6 +213,7 @@ final class KaraokeSession: ObservableObject {
 
     func start(record: Bool = true) {
         guard !wantsPlaying, externalMusic || player != nil else { return }
+        coaching=nil;coachingStatus=""
         wantsPlaying=true; requestingPermission=true; interrupted=false
         takeGeneration += 1
         generation += 1;let token=generation
@@ -391,7 +394,19 @@ final class KaraokeSession: ObservableObject {
         if wasActive { status="演唱已暂停，点击开始继续；宝宝剑连接保留。" }
     }
 
-    func finish() { pause();report=PracticeAssessment.evaluate(frames).text + "\n\n" + VocalMetrics.report(frames);status="演唱已结束，练习参考分与复盘已更新。" }
+    func finish() {
+        pause();coaching=nil;coachingStatus=""
+        report=assessment.text;status="演唱已结束，练习参考分与建议已更新。"
+    }
+    func loadReviewPreview() {
+        guard preview else { return }
+        pause();takeGeneration += 1
+        frames=(0..<120).map { index in
+            .init(time:Double(index)*0.1,rms:0.2*(0.6+Double(index%5)*0.2),
+                  pitch:220*pow(2,Double(index%5-2)*0.007),confidence:0.95)
+        }
+        finish()
+    }
     func seek(_ value: Double) {
         guard !externalMusic,value.isFinite else { return }
         position=min(duration,max(0,value));player?.currentTime=position
@@ -487,10 +502,12 @@ final class KaraokeSession: ObservableObject {
         do {
             let result=try await client.review(frames:samples,assessment:assessment,externalMusic:externalMusic,title:title)
             guard token==takeGeneration,!isSessionActive else { return }
-            report=assessment.text+"\n\n"+result
+            coaching=result;coachingStatus="AI 已把建议整理得更具体。"
+            report=assessment.text+"\n\n"+result.summary+"\n\n"+result.applying(to:assessment.tips).map { "\($0.title)\n\($0.action)\n\($0.goal)" }.joined(separator:"\n\n")
         } catch {
             guard token==takeGeneration,!isSessionActive else { return }
-            report=assessment.text+"\n\n"+VocalMetrics.report(frames)+"\n\n"+error.localizedDescription
+            coaching=nil;report=assessment.text
+            coachingStatus=error is CoachingError ? error.localizedDescription : "AI 这次暂未完成，本机分数和练习建议已保留。"
         }
     }
     private func saveSong() {
