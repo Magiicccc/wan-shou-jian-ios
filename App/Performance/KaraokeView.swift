@@ -54,7 +54,7 @@ struct KaraokeView: View {
             if case .success(let url)=result { if lyricsImport { session.importLyrics(url) } else { session.importAudio(url) } }
         }
         .sheet(isPresented:$console) { mixingConsole.presentationDetents([.medium,.large]) }
-        .sheet(isPresented:$ai) { DirectorSettingsView() }
+        .sheet(isPresented:$ai,onDismiss:{session.automaticDirection()}) { DirectorSettingsView() }
         .sheet(isPresented:$showingReport) { reportSheet }
         .sheet(isPresented:$externalSetup) { externalSheet }
         .sheet(isPresented:$lyricsSheet,onDismiss:{ controls=true;lastTouch=Date() }) { LyricsSheet(lyrics:session.externalLyrics) }
@@ -65,7 +65,7 @@ struct KaraokeView: View {
             Button("导入 LRC 歌词") { lyricsImport=true;importer=true }
             Button("原创演示") { session.useDemo() }
             Button("AI 接口设置") { ai=true }
-            Button("AI 编排本曲") { Task { await session.direct(using:client) } }
+            Button("重新生成 AI 分镜") { Task { await session.direct(using:client) } }
             Button("演唱复盘") { showingReport=true }
         }
     }
@@ -174,7 +174,7 @@ struct KaraokeView: View {
                 Section("网易云 / 外部播放") {
                     TextField("歌名（可选）",text:$songTitle).accessibilityIdentifier("external-title")
                     Text("1. 点击下方开始收音。\n2. 切到网易云音乐，选择歌曲播放并跟唱。\n3. 唱完返回，点击结束并复盘。")
-                    Text("音箱使用系统蓝牙，宝宝剑保持 App 内连接。返回舞台可查看歌词，并在「歌词与同步」中选择版本或对齐当前句。")
+                    Text("音箱使用系统蓝牙，宝宝剑保持 App 内连接。舞台自动查找同版本歌词，跟随播放器进度，并使用本机声音识别辅助定位。")
                     LabeledContent("选择播放设备") { AudioOutputPicker().frame(width:44,height:44) }
                 }
                 Section("评分范围") {
@@ -217,6 +217,7 @@ private struct AudioOutputPicker: UIViewRepresentable {
 }
 
 struct DirectorSettingsView: View {
+    @AppStorage("director.automatic") private var automatic=true
     @State private var settings=DirectorSettings.load()
     @State private var key=""
     @State private var message="密钥按接口地址保存在本机钥匙串。"
@@ -237,7 +238,8 @@ struct DirectorSettingsView: View {
                     Text(message).font(.footnote)
                 }
                 Section("AI 的工作方式") {
-                    Text("获取歌词后按需编排情绪与重点词，舞台按歌曲时间轴呈现。唱完后，AI 根据测量指标整理练习建议。")
+                    Toggle("自动分析歌词并编排",isOn:$automatic)
+                    Text("配置密钥后，歌曲歌词自动发送至所选 AI 服务，分析情绪、语义分组、重点和配色；结果缓存在本机。原始声音在本机处理。")
                     Text("首次使用先填写接口。未配置时可使用本地编排和本机测量。")
                 }.font(.footnote)
             }.modifier(StudioSurface()).navigationTitle("AI 导演").toolbar { Button("完成") { dismiss() } }

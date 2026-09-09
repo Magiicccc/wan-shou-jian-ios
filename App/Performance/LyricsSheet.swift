@@ -46,6 +46,7 @@ struct LyricsSheet: View {
                                 Spacer()
                                 Text(time(lyrics.position())).monospacedDigit().font(.caption)
                             }
+                            DisclosureGroup("同步诊断（可选）") {
                             Button { aligning.toggle() } label: {
                                 HStack { Text("点选当前唱到的一句");Spacer();Image(systemName:aligning ? "chevron.up" : "chevron.down") }
                             }.accessibilityIdentifier("lyrics-align")
@@ -58,8 +59,9 @@ struct LyricsSheet: View {
                             Text("歌词偏早时向左调，偏晚时向右调。音箱延迟随播放设备调整。")
                                 .font(.caption2).foregroundStyle(Atmosphere.muted)
                             Button("重新跟随播放器") { lyrics.followPlayer() }.font(.caption)
+                            }
                         }.padding(18).background(.white.opacity(0.045),in:RoundedRectangle(cornerRadius:18))
-                        if aligning || !lyrics.hasPosition {
+                        if aligning {
                             LazyVStack(alignment:.leading,spacing:0) {
                                 ForEach(lyrics.cues) { cue in
                                     Button { lyrics.align(to:cue);dismiss() } label: {
@@ -76,14 +78,14 @@ struct LyricsSheet: View {
                     }
                     LazyVStack(alignment:.leading,spacing:12) {
                         ForEach(lyrics.results) { record in
-                            Button { lyrics.choose(record);aligning=true } label: {
+                            Button { lyrics.choose(record);aligning=false } label: {
                                 HStack(spacing:14) {
                                     Image(systemName:lyrics.selectedID==record.id ? "checkmark.circle.fill" : "music.note")
                                         .foregroundStyle(lyrics.selectedID==record.id ? Atmosphere.ice : Atmosphere.muted)
                                     VStack(alignment:.leading,spacing:6) {
                                         Text(record.trackName).font(.system(size:16,weight:.medium))
                                         Text("\(record.artistName) · \(record.albumName ?? "单曲")").font(.caption).foregroundStyle(Atmosphere.muted)
-                                        Text("\(time(record.duration)) · \(record.hasTiming ? "时间轴歌词" : "纯文本")").font(.caption2).foregroundStyle(Atmosphere.muted)
+                                        Text("\(record.sourceName) · \(time(record.duration)) · \(record.hasTiming ? "时间轴歌词" : "歌词待获取")").font(.caption2).foregroundStyle(Atmosphere.muted)
                                     }
                                     Spacer(minLength:0)
                                     Image(systemName:"chevron.right").font(.caption)
@@ -96,8 +98,8 @@ struct LyricsSheet: View {
                         Text(lyrics.plainText).font(.body).lineSpacing(9).textSelection(.enabled)
                     }
                     VStack(alignment:.leading,spacing:8) {
-                        Text("歌词来自 LRCLIB，选用的版本缓存在本机。搜索发送歌名与歌手，声音继续在本机处理。")
-                        Text("播放器同步为侧载实验能力；手动对齐适用于自动读取暂时不可用的情况。带时间轴的歌词按句同步。")
+                        Text("优先匹配网易云曲目，LRCLIB 补充歌词。选用的版本缓存在本机，搜索发送歌名与歌手。")
+                        Text("自动跟随播放器进度；本机声音识别辅助句级定位。识别把握不足时自动等待下一句，诊断页保留手动工具。")
                     }.font(.caption2).foregroundStyle(Atmosphere.muted).lineSpacing(4)
                     if ProcessInfo.processInfo.arguments.contains("--preview") {
                         Button("载入原创歌词演示") { lyrics.loadPreview();aligning=true }
@@ -130,7 +132,7 @@ struct ExternalLyricStage:View {
             } else {
                 VStack(spacing:12) {
                     Text(lyrics.cues.isEmpty ? "等一句，与你共鸣" : "歌词已就位").font(Atmosphere.title(26))
-                    Text(lyrics.cues.isEmpty ? "识别当前播放器，或搜索你正在听的歌" : "点选当前句，开始同步")
+                    Text(lyrics.cues.isEmpty ? "正在识别曲目与歌词，也可搜索歌曲" : "正在聆听，自动寻找当前歌词位置")
                         .font(.system(size:12)).foregroundStyle(Atmosphere.muted)
                 }.frame(maxWidth:.infinity,maxHeight:.infinity)
             }

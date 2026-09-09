@@ -16,6 +16,8 @@ enum TypeScene: String, Codable, CaseIterable {
     case narrative, intimate, confrontation, falling, rising, echo, climax
 }
 
+enum LyricPalette:String,Codable,CaseIterable { case silver, mist, rose, wine, amber, champagne }
+
 struct LyricCue: Identifiable, Codable, Equatable {
     var id: Int
     var start: Double
@@ -24,6 +26,10 @@ struct LyricCue: Identifiable, Codable, Equatable {
     var emphasis: String
     var scene: TypeScene
     var mood: SongMood
+    var groups:[String]? = nil
+    var palette:LyricPalette? = nil
+    var intensity:Double? = nil
+    var focusStart:Int? = nil
 }
 
 enum ScoreError: LocalizedError {
@@ -85,7 +91,7 @@ enum PerformanceScore {
         return unique.enumerated().map { index, row in
             let mood: SongMood = ["失去", "离开", "泪", "孤独", "再见"].contains(where: row.1.contains) ? .sorrow : .reflective
             return LyricCue(id: index, start: row.0, end: index + 1 < unique.count ? unique[index+1].0 : duration,
-                            text: row.1, emphasis: String(row.1.suffix(min(2,row.1.count))), scene: mood == .sorrow ? .intimate : .narrative, mood: mood)
+                            text: row.1, emphasis: "", scene: .narrative, mood: mood)
         }
     }
 
@@ -98,15 +104,30 @@ enum PerformanceScore {
         var emphasis: String
         var scene: TypeScene
         var mood: SongMood
+        var groups:[String]? = nil
+        var palette:LyricPalette? = nil
+        var intensity:Double? = nil
+        var focusStart:Int? = nil
     }
     struct Plan: Codable { var directions: [Direction] }
     static func apply(_ plan: Plan, to cues: [LyricCue]) throws -> [LyricCue] {
         guard plan.directions.count == cues.count, Set(plan.directions.map(\.id)).count == cues.count else { throw ScoreError.invalidPlan }
         var result = cues
         for direction in plan.directions {
-            guard let i = result.firstIndex(where: { $0.id == direction.id }), !direction.emphasis.isEmpty,
-                  direction.emphasis.count <= 6, result[i].text.contains(direction.emphasis) else { throw ScoreError.invalidPlan }
+            guard let i = result.firstIndex(where: { $0.id == direction.id }),
+                  direction.emphasis.count <= 8, (direction.emphasis.isEmpty || result[i].text.contains(direction.emphasis)) else { throw ScoreError.invalidPlan }
+            if let groups=direction.groups {
+                guard (1...3).contains(groups.count),groups.allSatisfy({!$0.isEmpty}),groups.joined()==result[i].text else { throw ScoreError.invalidPlan }
+            }
+            if let intensity=direction.intensity { guard intensity.isFinite,(0...1).contains(intensity) else { throw ScoreError.invalidPlan } }
+            if let start=direction.focusStart {
+                let chars=Array(result[i].text)
+                guard start>=0,start<=chars.count,direction.emphasis.count<=chars.count-start,
+                      String(chars[start..<(start+direction.emphasis.count)])==direction.emphasis else { throw ScoreError.invalidPlan }
+            }
             result[i].emphasis = direction.emphasis; result[i].scene = direction.scene; result[i].mood = direction.mood
+            result[i].groups=direction.groups;result[i].palette=direction.palette
+            result[i].intensity=direction.intensity;result[i].focusStart=direction.focusStart
         }
         return result
     }

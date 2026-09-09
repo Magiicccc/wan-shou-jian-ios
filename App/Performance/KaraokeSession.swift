@@ -54,6 +54,7 @@ final class KaraokeSession: ObservableObject {
     private var engine: AVAudioEngine?
     private var reverb: AVAudioUnitReverb?
     private var probe: VocalProbe?
+    private let speech=SpokenLyricSync()
     private var timer: Task<Void,Never>?
     private var generation = 0
     private var frames: [VocalFrame] = []
@@ -71,6 +72,9 @@ final class KaraokeSession: ObservableObject {
     private var externalClock = PerformanceClock()
     private let recoveryDelay: UInt64
     private var takeGeneration = 0
+    private var directionTask:Task<Void,Never>?
+    private var directionKey=""
+    private var directionCheck=0.0
     private struct SavedSong: Codable { var file:String;var title:String;var cues:[LyricCue] }
     private var songDirectory:URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Songs") }
     var lyricPosition:Double { externalMusic ? externalLyrics.position() : position }
@@ -215,6 +219,8 @@ final class KaraokeSession: ObservableObject {
                 pause(); status="请在系统设置中允许麦克风权限，再开始外部音乐演唱。"; return
             }
             captureGranted=granted
+            if externalMusic && granted && !preview { await speech.authorize() }
+            guard generation==token,wantsPlaying else { return }
             do {
                 if position >= duration - 0.1 {
                     position=0; externalClock=PerformanceClock(); player?.currentTime=0; frames=[]; takeGeneration += 1
@@ -249,7 +255,20 @@ final class KaraokeSession: ObservableObject {
                 if measured.rms>0.65 { self.monitorEnabled=false;self.status="输入电平过高，已关闭人声返送；伴奏和测量继续。" }
             }
         }
-        engine.inputNode.installTap(onBus:0,bufferSize:2048,format:format) { buffer,_ in probe.offer(buffer,time:0) }
+        let speech=self.speech
+        if externalMusic {
+            speech.receive={ [weak self] words in
+                Task { @MainActor [weak self] in
+                    guard let self,self.generation==token,self.playing else { return }
+                    self.externalLyrics.accept(words:words)
+                }
+            }
+            speech.state={ [weak self] text in Task { @MainActor in self?.status=text } }
+            speech.start()
+        }
+        engine.inputNode.installTap(onBus:0,bufferSize:2048,format:format) { buffer,_ in
+            probe.offer(buffer,time:0);speech.append(buffer)
+        }
         self.engine=engine;self.reverb=reverb;self.probe=probe
         engine.prepare();try engine.start()
         configurationObserver=NotificationCenter.default.addObserver(forName:.AVAudioEngineConfigurationChange,object:engine,queue:.main) { [weak self] _ in
@@ -287,6 +306,7 @@ final class KaraokeSession: ObservableObject {
     }
 
     private func suspendAudio(freezeExternalClock: Bool) {
+        speech.stop()
         generation += 1; playing=false; hasMicrophone=false
         timer?.cancel(); timer=nil
         if freezeExternalClock {
@@ -369,6 +389,7 @@ final class KaraokeSession: ObservableObject {
     }
 
     private func tick() {
+        automaticDirection()
         let target: Double
         if externalMusic {
             position=min(duration,externalClock.elapsed(at:ProcessInfo.processInfo.systemUptime))
@@ -395,26 +416,55 @@ final class KaraokeSession: ObservableObject {
         if !preview { manager.submitRhythmColor(light.color) }
     }
 
-    func direct(using client: DirectorClient) async {
+    func automaticDirection() {
+        guard !preview else { return }
+        guard DirectorCache.automatic else { directionTask?.cancel();directionKey="";return }
+        let now=ProcessInfo.processInfo.systemUptime
+        guard now-directionCheck>3 else { return };directionCheck=now
+        let original=externalMusic ? externalLyrics.cues : cues
+        guard !original.isEmpty,!analyzing else { return }
+        let settings=DirectorSettings.load(),key=DirectorCache.key(cues:original,settings:DirectorSettings.load())
+        guard key != directionKey else { return }
+        let credential=DirectorKeychain.read(for:settings.credentialID)
+        guard !credential.isEmpty else { return }
+        directionKey=key;directionTask?.cancel()
+        directionTask=Task { [weak self] in
+            await self?.direct(using:.init(settings:settings,key:credential),cached:true)
+        }
+    }
+
+    func direct(using client: DirectorClient,cached:Bool=false) async {
         if externalMusic {
             guard !analyzing,!externalLyrics.cues.isEmpty else { return }
             analyzing=true;defer { analyzing=false }
             let original=externalLyrics.cues, id=externalLyrics.selectedID
             do {
-                let plan=try await client.plan(cues:original,bins:[])
-                guard externalMusic,externalLyrics.selectedID==id,externalLyrics.cues==original else { return }
+                let key=DirectorCache.key(cues:original,settings:client.settings)
+                let plan:PerformanceScore.Plan
+                if cached,let saved=DirectorCache.read(key) { plan=saved }
+                else { plan=try await client.plan(cues:original,bins:[]) }
+                guard !Task.isCancelled,externalMusic,externalLyrics.selectedID==id,externalLyrics.cues==original else { return }
                 try externalLyrics.apply(plan)
+                DirectorCache.save(plan,key:key)
                 status="AI 情绪与歌词分镜已应用。"
-            } catch { status=error.localizedDescription }
+            } catch {
+                if !Task.isCancelled { status=error.localizedDescription;directionKey="";directionCheck=ProcessInfo.processInfo.systemUptime+60 }
+            }
             return
         }
         guard !analyzing,!cues.isEmpty else { return };analyzing=true;defer { analyzing=false }
         let original=cues;let token=importGeneration
         do {
-            let plan=try await client.plan(cues:original,bins:bins)
-            guard token==importGeneration,cues==original else { return }
+            let key=DirectorCache.key(cues:original,settings:client.settings)
+            let plan:PerformanceScore.Plan
+            if cached,let saved=DirectorCache.read(key) { plan=saved }
+            else { plan=try await client.plan(cues:original,bins:bins) }
+            guard !Task.isCancelled,!externalMusic,token==importGeneration,cues==original else { return }
             cues=try PerformanceScore.apply(plan,to:original);saveSong();status="AI 情绪与歌词分镜已应用。"
-        } catch { status=error.localizedDescription }
+            DirectorCache.save(plan,key:key)
+        } catch {
+            if !Task.isCancelled { status=error.localizedDescription;directionKey="";directionCheck=ProcessInfo.processInfo.systemUptime+60 }
+        }
     }
 
     func review(using client: DirectorClient) async {

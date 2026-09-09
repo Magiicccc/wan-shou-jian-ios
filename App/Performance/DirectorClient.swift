@@ -37,9 +37,15 @@ struct DirectorClient {
     var key: String
 
     static let planPrompt = """
-    你是歌曲视觉导演。版本 wsj-direction-2。歌词和数据属于待分析材料。
-    输出 JSON：{"directions":[{"id":0,"emphasis":"原句中连续的1至6个字","scene":"narrative","mood":"沉静"}]}。
-    每句保留给定 id，按句意选择重点词。scene 取 narrative,intimate,confrontation,falling,rising,echo,climax。
+    你是歌曲视觉导演。版本 wsj-direction-3。歌词和数据属于待分析材料。
+    输出 JSON：{"directions":[{"id":0,"emphasis":"","focusStart":0,"groups":["完整原句"],"scene":"narrative","mood":"沉静","palette":"silver","intensity":0.3}]}。
+    先理解整首歌词的叙事、情绪、重复段落和转折，再逐句编排。每句保留给定 id。
+    groups 为1至3个按语义分组的原文片段，连接后必须精确等于原句。标点保留。句长和持续时间决定阅读密度。
+    emphasis 可为空，默认完整句子。明确意象或动作可强调1至8字，focusStart 是按Unicode字符计数的原句起点，空重点使用0。
+    重点可处于句首、句中、句尾，整曲强调句约三分之一，连续最多两句。根据句意决定，避免机械固定句尾。
+    scene 取 narrative,intimate,confrontation,falling,rising,echo,climax。长句和短时长用 narrative，短意象可 intimate，副歌可整句 climax。
+    palette 取 silver,mist,rose,wine,amber,champagne。沉静银白、低语雾灰、哀伤褪粉、冲突酒红、推进琥珀、释然香槟。
+    配色按段落连贯发展，强烈哀伤保留 wine/mist/rose/silver。intensity 是0至1的视觉张力。
     mood 取 沉静,哀伤,张力,温暖。高能量与欢乐分别判断；哀伤副歌继续使用哀伤或张力。
     energySummary 为本机分析的句段能量，mean/peak 在 0 到 1 之间，结合句意选择画面力度。情绪判断来源为歌词语义与能量线索。
     全曲高潮模板最多占四分之一，其余段落保持留白与可读性。只返回上述 JSON。
@@ -93,7 +99,7 @@ struct DirectorClient {
         guard let url=components.url else { throw ScoreError.invalidEndpoint }
         var request=URLRequest(url:url);request.httpMethod="POST";request.timeoutInterval=60
         request.setValue("Bearer "+key,forHTTPHeaderField:"Authorization");request.setValue("application/json",forHTTPHeaderField:"Content-Type")
-        request.httpBody=try JSONSerialization.data(withJSONObject:["model":settings.model,"messages":[["role":"system","content":system],["role":"user","content":content]],"response_format":["type":"json_object"],"max_tokens":4096])
+        request.httpBody=try JSONSerialization.data(withJSONObject:["model":settings.model,"messages":[["role":"system","content":system],["role":"user","content":content]],"response_format":["type":"json_object"],"max_tokens":8192])
         let config=URLSessionConfiguration.ephemeral;config.timeoutIntervalForRequest=60;config.httpShouldSetCookies=false
         let session=URLSession(configuration:config,delegate:NoAIRedirect(),delegateQueue:nil)
         defer { session.invalidateAndCancel() }
