@@ -3,8 +3,10 @@ import XCTest
 
 final class PracticeCoachingTests:XCTestCase {
     private func tone(varyVolume:Bool=false)->[VocalFrame] {
-        (0..<120).map { i in
-            .init(time:Double(i)*0.1,rms:varyVolume ? 0.2*(0.6+Double(i%5)*0.2) : 0.2,pitch:220,confidence:0.95)
+        (0..<120).map { i -> VocalFrame in
+            let step=Double(i % 5)
+            let level=varyVolume ? 0.2*(0.6+step*0.2) : 0.2
+            return VocalFrame(time:Double(i)*0.1,rms:level,pitch:220,confidence:0.95)
         }
     }
     private func data(id:String="keep-steady",action:String="把这一句轻声唱三遍。",extra:Bool=false)->Data {

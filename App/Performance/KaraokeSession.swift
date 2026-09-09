@@ -401,9 +401,11 @@ final class KaraokeSession: ObservableObject {
     func loadReviewPreview() {
         guard preview else { return }
         pause();takeGeneration += 1
-        frames=(0..<120).map { index in
-            .init(time:Double(index)*0.1,rms:0.2*(0.6+Double(index%5)*0.2),
-                  pitch:220*pow(2,Double(index%5-2)*0.007),confidence:0.95)
+        frames=(0..<120).map { index -> VocalFrame in
+            let step=Double(index % 5)
+            let level=0.2*(0.6+step*0.2)
+            let pitch=220.0*pow(2.0,(step-2.0)*0.007)
+            return VocalFrame(time:Double(index)*0.1,rms:level,pitch:pitch,confidence:0.95)
         }
         finish()
     }
