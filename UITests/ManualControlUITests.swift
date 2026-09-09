@@ -160,7 +160,8 @@ final class ManualControlUITests: XCTestCase {
         let line=app.buttons["lyric-line-1"]
         for _ in 0..<6 {
             if line.isHittable { break }
-            app.swipeDown()
+            if line.exists && line.frame.minY<100 { app.swipeDown() }
+            else { app.swipeUp() }
         }
         XCTAssertTrue(line.isHittable)
         attach(app,name:"12-lyrics-alignment")

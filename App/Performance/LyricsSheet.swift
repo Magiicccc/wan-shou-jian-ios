@@ -19,6 +19,7 @@ struct LyricsSheet: View {
     @Environment(\.dismiss) private var dismiss
     var body:some View {
         NavigationStack {
+          ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
                     VStack(alignment:.leading,spacing:8) {
@@ -70,7 +71,7 @@ struct LyricsSheet: View {
                                     }.accessibilityIdentifier("lyric-line-\(cue.id)")
                                     Divider().overlay(.white.opacity(0.04))
                                 }
-                            }
+                            }.id("lyric-lines")
                         }
                     }
                     LazyVStack(alignment:.leading,spacing:12) {
@@ -105,6 +106,12 @@ struct LyricsSheet: View {
                 }.padding(24)
             }.modifier(StudioSurface()).navigationTitle("歌词与同步")
                 .toolbar { Button("完成") { dismiss() } }
+                .onChange(of:lyrics.selectedID) { _,_ in
+                    if !lyrics.cues.isEmpty {
+                        DispatchQueue.main.async { withAnimation { proxy.scrollTo("lyric-lines",anchor:.top) } }
+                    }
+                }
+          }
         }.preferredColorScheme(.dark)
         .onAppear { query=lyrics.track?.title ?? "";artist=lyrics.track?.artist ?? "" }
     }
