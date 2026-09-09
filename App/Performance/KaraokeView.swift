@@ -57,7 +57,7 @@ struct KaraokeView: View {
         .sheet(isPresented:$ai) { DirectorSettingsView() }
         .sheet(isPresented:$showingReport) { reportSheet }
         .sheet(isPresented:$externalSetup) { externalSheet }
-        .sheet(isPresented:$lyricsSheet) { LyricsSheet(lyrics:session.externalLyrics) }
+        .sheet(isPresented:$lyricsSheet,onDismiss:{ controls=true;lastTouch=Date() }) { LyricsSheet(lyrics:session.externalLyrics) }
         .confirmationDialog("舞台菜单",isPresented:$menu,titleVisibility:.visible) {
             Button("导入音频") { lyricsImport=false;importer=true }
             Button("网易云 / 外部播放") { externalSetup=true }
