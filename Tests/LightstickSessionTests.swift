@@ -185,6 +185,21 @@ final class LightstickSessionTests: XCTestCase {
         XCTAssertNil(intent.nextRetryDelay(inBackground:true))
     }
 
+    @MainActor func testSelectedManualDeviceSurvivesSettingsTripAndExplicitDisconnectWins() {
+        let manager=LightstickManager(preview:true)
+        manager.connect(UUID())
+        manager.applicationDidEnterBackground()
+        XCTAssertEqual(manager.phase,.ready)
+        XCTAssertFalse(manager.canControl)
+        manager.applicationWillEnterForeground()
+        XCTAssertTrue(manager.canControl)
+        manager.disconnect()
+        manager.applicationDidEnterBackground()
+        manager.applicationWillEnterForeground()
+        XCTAssertEqual(manager.phase,.idle)
+        XCTAssertFalse(manager.hasCreatedCentralManager)
+    }
+
     func testRestorationIntentHasBoundedAgeAndSurvivesEncoding() throws {
         let start = Date(timeIntervalSince1970: 1_000)
         var intent = LightstickRhythmIntent()

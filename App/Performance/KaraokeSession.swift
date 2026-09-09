@@ -335,6 +335,7 @@ final class KaraokeSession: ObservableObject {
         suspendAudio(freezeExternalClock:true)
         if !preview && wasActive { manager.endRhythm(sendBlack:true);try? AVAudioSession.sharedInstance().setActive(false,options:.notifyOthersOnDeactivation) }
         audioActive=false
+        if wasActive { status="演唱已暂停，点击开始继续；宝宝剑连接保留。" }
     }
 
     func finish() { pause();report=PracticeAssessment.evaluate(frames).text + "\n\n" + VocalMetrics.report(frames);status="演唱已结束，练习参考分与复盘已更新。" }

@@ -349,7 +349,10 @@ final class LightstickManager: NSObject, ObservableObject {
     }
 
     func connect(_ id: UUID) {
-        guard !preview else { phase = .ready; message = "屏幕演示已就绪。"; return }
+        guard !preview else {
+            rhythmIntent.select(id,name:"LTDEMO")
+            phase = .ready; message = "屏幕演示已就绪。"; return
+        }
         guard !backgrounded, gate.canBegin, pendingRestored.isEmpty, discardedRestoredIDs.isEmpty else {
             message = "请等待当前会话释放后再连接。"
             return
