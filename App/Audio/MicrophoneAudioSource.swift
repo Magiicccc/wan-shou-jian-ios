@@ -95,9 +95,8 @@ final class MicrophoneAudioSource: RhythmAudioSource {
         self.onEvent = onEvent
         let audio = AVAudioSession.sharedInstance()
         do {
-            try audio.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
             try audio.setPreferredIOBufferDuration(0.02)
-            try audio.setActive(true)
+            try HomeAudioRouting.activate(capture: true)
             installSessionObservers(audio)
             let created = AVAudioEngine()
             let input = created.inputNode

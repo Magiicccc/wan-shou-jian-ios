@@ -118,6 +118,27 @@ final class ManualControlUITests: XCTestCase {
         attach(app,name:"08-ai-settings")
     }
 
+    func testExternalMusicEntryAndReviewWorkWithoutImport() {
+        let app=XCUIApplication()
+        app.launchArguments=["--preview"]
+        app.launch()
+        XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10))
+        app.buttons["tab-3"].tap()
+        app.buttons["external-music"].tap()
+        let start=app.buttons["external-start"]
+        XCTAssertTrue(start.waitForExistence(timeout:5))
+        if !start.isHittable { app.swipeUp() }
+        attach(app,name:"09-external-music-setup")
+        start.tap()
+        XCTAssertTrue(app.staticTexts["external-elapsed"].waitForExistence(timeout:5))
+        XCTAssertFalse(app.sliders["stage-progress"].exists)
+        XCTAssertEqual(app.buttons["stage-play"].label,"暂停舞台")
+        attach(app,name:"10-external-stage")
+        app.buttons["stage-finish"].tap()
+        XCTAssertTrue(app.staticTexts["这一段，听见自己"].waitForExistence(timeout:5))
+        attach(app,name:"11-external-review")
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let scroll = app.scrollViews.firstMatch
         let primary = app.buttons["primary-control"]

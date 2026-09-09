@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AVKit
 
 struct KaraokeView: View {
     @ObservedObject var session:KaraokeSession
@@ -10,6 +11,8 @@ struct KaraokeView: View {
     @State private var showingReport=false
     @State private var menu=false
     @State private var controls=true
+    @State private var externalSetup=false
+    @State private var songTitle=""
     @State private var lastTouch=Date()
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     var body: some View {
@@ -18,10 +21,23 @@ struct KaraokeView: View {
                 Color.black.ignoresSafeArea()
                 VStack(spacing:0) {
                     header.padding(.horizontal,24).padding(.top,12).zIndex(2)
+                    if !session.isSessionActive {
+                        Button { externalSetup=true } label: {
+                            Label("网易云 / 外部播放",systemImage:"music.note.list").font(.system(size:13))
+                                .padding(.vertical,9).frame(maxWidth:.infinity)
+                                .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:12))
+                        }.padding(.horizontal,24).padding(.top,8).accessibilityIdentifier("external-music")
+                    }
                     FoxStageView(light:session.light,time:session.position,active:session.playing)
-                        .frame(height:max(140,(g.size.height-225)*0.56)).clipped().allowsHitTesting(false)
-                    KineticLyricsView(cue:session.currentCue,time:session.position,energy:session.energy)
-                        .frame(height:max(100,(g.size.height-225)*0.44)).padding(.horizontal,28).clipped().allowsHitTesting(false)
+                        .frame(height:max(140,(g.size.height-265)*0.56)).clipped().allowsHitTesting(false)
+                    Group {
+                        if session.externalMusic {
+                            VStack(spacing:12) {
+                                Text(session.hasMicrophone ? "此 刻，听 见 你" : "跟 着 喜 欢 的 歌 唱").font(Atmosphere.title(24))
+                                Text("网易云播放 · iPhone 收音 · 唱完 AI 复盘").font(.system(size:12)).foregroundStyle(Atmosphere.muted)
+                            }
+                        } else { KineticLyricsView(cue:session.currentCue,time:session.position,energy:session.energy) }
+                    }.frame(height:max(100,(g.size.height-265)*0.44)).padding(.horizontal,28).clipped().allowsHitTesting(false)
                     Spacer(minLength:4)
                     if controls || !session.playing || voiceOver { transport.padding(.horizontal,24).transition(.opacity) }
                 }
@@ -42,8 +58,10 @@ struct KaraokeView: View {
         .sheet(isPresented:$console) { mixingConsole.presentationDetents([.medium,.large]) }
         .sheet(isPresented:$ai) { DirectorSettingsView() }
         .sheet(isPresented:$showingReport) { reportSheet }
+        .sheet(isPresented:$externalSetup) { externalSheet }
         .confirmationDialog("舞台菜单",isPresented:$menu,titleVisibility:.visible) {
             Button("导入音频") { lyricsImport=false;importer=true }
+            Button("网易云 / 外部播放") { externalSetup=true }
             Button("导入 LRC 歌词") { lyricsImport=true;importer=true }
             Button("原创演示") { session.useDemo() }
             Button("AI 接口设置") { ai=true }
@@ -68,18 +86,23 @@ struct KaraokeView: View {
         VStack(spacing:10) {
             HStack {
                 Text(clock(session.position)).monospacedDigit()
-                Slider(value:Binding(get:{session.position},set:{session.seek($0)}),in:0...max(1,session.duration))
-                    .tint(Atmosphere.silver).accessibilityLabel("播放进度").accessibilityIdentifier("stage-progress")
-                Text(clock(session.duration)).monospacedDigit()
+                if session.externalMusic {
+                    Spacer()
+                    Text("自由演唱 · 最长 20 分钟").accessibilityIdentifier("external-elapsed")
+                } else {
+                    Slider(value:Binding(get:{session.position},set:{session.seek($0)}),in:0...max(1,session.duration))
+                        .tint(Atmosphere.silver).accessibilityLabel("播放进度").accessibilityIdentifier("stage-progress")
+                    Text(clock(session.duration)).monospacedDigit()
+                }
             }.font(.caption2).foregroundStyle(Atmosphere.muted)
             HStack(spacing:28) {
                 Button { console=true } label: { Image(systemName:"slider.vertical.3").frame(width:44,height:44) }.accessibilityLabel("混音控制")
-                Button { lastTouch=Date();if session.playing { session.pause() } else { session.start() } } label: {
-                    Image(systemName:session.playing ? "pause.fill" : "play.fill").font(.system(size:20,weight:.light))
+                Button { lastTouch=Date();if session.isSessionActive { session.pause() } else { session.start() } } label: {
+                    Image(systemName:session.isSessionActive ? "pause.fill" : "play.fill").font(.system(size:20,weight:.light))
                         .frame(width:64,height:64).background(.white.opacity(0.06),in:Circle())
                         .overlay(Circle().strokeBorder(Atmosphere.metal,lineWidth:1))
-                }.accessibilityLabel(session.playing ? "暂停舞台" : "开始舞台").accessibilityIdentifier("stage-play")
-                Button { session.finish();showingReport=true } label: { Image(systemName:"stop").frame(width:44,height:44) }.accessibilityLabel("结束并复盘")
+                }.accessibilityLabel(session.isSessionActive ? "暂停舞台" : "开始舞台").accessibilityIdentifier("stage-play")
+                Button { session.finish();showingReport=true } label: { Image(systemName:"stop").frame(width:44,height:44) }.accessibilityLabel("结束并复盘").accessibilityIdentifier("stage-finish")
             }
             Text(session.analyzing ? "AI 正在分析，舞台保持本地运行" : session.status)
                 .font(.system(size:10)).foregroundStyle(Atmosphere.muted).lineLimit(2).multilineTextAlignment(.center)
@@ -90,13 +113,16 @@ struct KaraokeView: View {
         NavigationStack {
             Form {
                 Section("声音") {
-                    LabeledContent("伴奏音量") { Slider(value:$session.accompanimentVolume,in:0...1) }
-                    Toggle("人声实时返送",isOn:$session.monitorEnabled)
+                    LabeledContent("播放设备") { AudioOutputPicker().frame(width:44,height:44) }
+                    Text(session.route).font(.footnote)
+                    if !session.externalMusic { LabeledContent("伴奏音量") { Slider(value:$session.accompanimentVolume,in:0...1) } }
+                    Toggle("人声实时返送",isOn:$session.monitorEnabled).disabled(session.externalMusic)
                     LabeledContent("返送音量") { Slider(value:$session.monitorVolume,in:0...0.3) }
                     LabeledContent("房间混响") { Slider(value:$session.reverbAmount,in:0...0.3) }
                     Text("手机自身外放：返送从低音量开始。出现回声或尖锐声时关闭返送；声线分析仍可继续。").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("光") { LabeledContent("亮度上限") { Slider(value:$session.brightness,in:0...1) } }
+                if session.externalMusic { Section("歌曲氛围") { Picker("配色",selection:$session.externalMood) { ForEach(SongMood.allCases,id:\.self) { Text($0.rawValue).tag($0) } } } }
                 Section("实时测量") {
                     LabeledContent("麦克风",value:session.hasMicrophone ? "正在收音" : "已关闭")
                     LabeledContent("声线频率",value:session.vocal.pitch>0 ? "\(Int(session.vocal.pitch)) Hz" : "等待稳定声线")
@@ -111,14 +137,45 @@ struct KaraokeView: View {
                 VStack(alignment:.leading,spacing:24) {
                     Text("这一段，听见自己").font(Atmosphere.title(26))
                     Text(session.report).font(.body).lineSpacing(7).textSelection(.enabled)
-                    Button(session.analyzing ? "分析中" : "用 AI 整理练习建议") { Task { await session.review(using:client) } }.disabled(session.analyzing)
+                    Button(session.analyzing ? "分析中" : "AI 评分解读与练习建议") { Task { await session.review(using:client) } }.disabled(session.analyzing || session.isSessionActive || session.evidence.isEmpty)
                     Text("发送内容为带时间戳的声线与电平指标。原始声音保留在本机音频链路中。").font(.footnote).foregroundStyle(.secondary)
                 }.padding(26)
             }.navigationTitle("演唱复盘").toolbar { Button("完成") { showingReport=false } }
         }.preferredColorScheme(.dark)
     }
+    private var externalSheet: some View {
+        NavigationStack {
+            Form {
+                Section("网易云 / 外部播放") {
+                    TextField("歌名（可选）",text:$songTitle).accessibilityIdentifier("external-title")
+                    Text("1. 点击下方开始收音。\n2. 切到网易云音乐，选择歌曲播放并跟唱。\n3. 唱完返回，点击结束并复盘。")
+                    Text("音箱通过系统蓝牙连接，宝宝剑保持 App 内连接。手机麦克风持续收音，后台显示系统麦克风标记。")
+                    LabeledContent("选择播放设备") { AudioOutputPicker().frame(width:44,height:44) }
+                }
+                Section("评分范围") {
+                    Text("提供持续声线稳定度、收音电平参考分及 AI 练习建议。原唱与伴奏会进入麦克风，建议选伴奏版、降低音箱音量并靠近手机演唱。歌词可在网易云中查看。")
+                }
+                Section {
+                    Button("开始外部音乐演唱") {
+                        let name=songTitle.trimmingCharacters(in:.whitespacesAndNewlines)
+                        session.useExternalMusic(title:name.isEmpty ? "网易云 · 自由演唱" : name)
+                        session.start(); externalSetup=false; controls=true; lastTouch=Date()
+                    }.accessibilityIdentifier("external-start")
+                }
+            }.navigationTitle("跟着网易云唱").toolbar { Button("完成") { externalSetup=false } }
+        }.preferredColorScheme(.dark)
+    }
     private var client:DirectorClient { let s=DirectorSettings.load();return .init(settings:s,key:DirectorKeychain.read(for:s.credentialID)) }
     private func clock(_ value:Double)->String { String(format:"%02d:%02d",Int(value)/60,Int(value)%60) }
+}
+
+private struct AudioOutputPicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker=AVRoutePickerView(); picker.tintColor = .lightGray; picker.activeTintColor = .white
+        picker.prioritizesVideoDevices=false
+        return picker
+    }
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
 struct DirectorSettingsView: View {

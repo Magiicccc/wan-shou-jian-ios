@@ -135,7 +135,7 @@ final class LightstickSessionTests: XCTestCase {
         XCTAssertFalse(window.isOpen(at: 0))
     }
 
-    func testRhythmRecoveryRequiresSelectedDeviceAndExplicitRhythmIntent() {
+    func testSelectedConnectionSurvivesAudioStopAndBackgroundOptOut() {
         var intent = LightstickRhythmIntent()
         intent.setBackgroundEnabled(true)
         XCTAssertFalse(intent.permitsRecovery(inBackground: true))
@@ -145,10 +145,13 @@ final class LightstickSessionTests: XCTestCase {
         XCTAssertTrue(intent.permitsRecovery(inBackground: true))
         intent.setBackgroundEnabled(false)
         XCTAssertTrue(intent.permitsRecovery(inBackground: false))
-        XCTAssertFalse(intent.permitsRecovery(inBackground: true))
+        XCTAssertTrue(intent.permitsRecovery(inBackground: true))
+        XCTAssertFalse(intent.keepsBackgroundConnection)
         intent.stop()
-        XCTAssertFalse(intent.permitsRecovery(inBackground: false))
+        XCTAssertTrue(intent.permitsRecovery(inBackground: false))
         XCTAssertNotNil(intent.selectedID)
+        intent.stop(clearSelection:true)
+        XCTAssertFalse(intent.permitsRecovery(inBackground:true))
     }
 
     func testRhythmRecoveryBudgetIsBoundedAndStopInvalidatesPendingGeneration() {
@@ -163,11 +166,23 @@ final class LightstickSessionTests: XCTestCase {
         XCTAssertNil(intent.nextRetryDelay(inBackground: false))
         intent.stop()
         XCTAssertGreaterThan(intent.generation, token)
-        XCTAssertNil(intent.nextRetryDelay(inBackground: false))
+        XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 1)
         intent.start(at: Date())
         XCTAssertEqual(intent.nextRetryDelay(inBackground: false), 1)
         intent.stop(clearSelection: true)
         XCTAssertNil(intent.selectedID)
+    }
+
+    func testManualSelectionCanStayConnectedWhilePairingSpeakerWithoutColdRestoration() {
+        var intent=LightstickRhythmIntent()
+        intent.select(UUID(),name:"LTDEMO")
+        XCTAssertTrue(intent.hasSelectedConnection)
+        XCTAssertTrue(intent.permitsRecovery(inBackground:true))
+        XCTAssertFalse(intent.keepsBackgroundConnection)
+        XCTAssertFalse(intent.permitsRestoration(at:Date()))
+        intent.stop(clearSelection:true)
+        XCTAssertFalse(intent.hasSelectedConnection)
+        XCTAssertNil(intent.nextRetryDelay(inBackground:true))
     }
 
     func testRestorationIntentHasBoundedAgeAndSurvivesEncoding() throws {

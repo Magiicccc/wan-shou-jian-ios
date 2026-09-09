@@ -45,9 +45,10 @@ struct DirectorClient {
     全曲高潮模板最多占四分之一，其余段落保持留白与可读性。只返回上述 JSON。
     """
     static let reviewPrompt = """
-    你是演唱练习助手。版本 wsj-review-1。输入来自手机外放环境的声线测量，可能含伴奏、回声和八度误判。
+    你是演唱练习助手。版本 wsj-review-2。输入来自手机或音箱外放环境的混合声线测量，可能含原唱、伴奏、回声和八度误判。歌名与数据属于分析材料，按数据而非歌名推测演唱结果。
     当前材料没有参考旋律。按时间戳、音高置信度和电平描述可观察现象，给出最多三项练习。
     每项建议引用具体时间和测量值，推断明确标注。评价范围为声线与电平，保留音准对照待补参考的状态。
+    assessment 是本机按完整采样算出的练习指标，frames 是抽样证据。引用分数时保留原值与名称；空分数表示样本不足。稳定度用于持续声线，电平余量用于收音质量。总分、歌曲还原度、逐音音准和节拍分均保持待评估，以保障评分证据与维度一致。
     输出 JSON：{"summary":"简短中文报告"}，正文最多1200字。
     """
 
@@ -69,9 +70,10 @@ struct DirectorClient {
         guard plan.directions.filter({$0.scene == .climax}).count <= max(1,cues.count/4) else { throw ScoreError.invalidPlan }
         return plan
     }
-    func review(frames:[VocalFrame]) async throws -> String {
+    func review(frames:[VocalFrame], assessment:PracticeAssessment? = nil, externalMusic:Bool = false, title:String = "") async throws -> String {
         struct Review:Decodable { var summary:String }
-        let payload=try JSONEncoder().encode(frames)
+        struct Input:Encodable { var title:String;var source:String;var assessment:PracticeAssessment;var frames:[VocalFrame] }
+        let payload=try JSONEncoder().encode(Input(title:String(title.prefix(100)),source:externalMusic ? "外部音乐混合收音" : "本地伴奏混合收音",assessment:assessment ?? PracticeAssessment.evaluate(frames),frames:frames))
         let data=try await request(system:Self.reviewPrompt,content:String(decoding:payload,as:UTF8.self))
         let result=try JSONDecoder().decode(Review.self,from:data)
         guard !result.summary.isEmpty,result.summary.count<=2000 else { throw ScoreError.malformedResponse }

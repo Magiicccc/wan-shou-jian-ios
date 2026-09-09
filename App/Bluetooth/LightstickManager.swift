@@ -142,6 +142,7 @@ struct LightstickRhythmIntent: Codable {
     static let restorationLifetime: TimeInterval = 6 * 60 * 60
 
     var keepsBackgroundConnection: Bool { rhythmRequested && backgroundEnabled }
+    var hasSelectedConnection: Bool { selectedID != nil && selectedName.uppercased().hasPrefix("LT") }
 
     mutating func select(_ id: UUID, name: String) {
         selectedID = id
@@ -173,12 +174,12 @@ struct LightstickRhythmIntent: Codable {
     }
 
     func permitsRecovery(inBackground: Bool) -> Bool {
-        rhythmRequested && selectedID != nil && selectedName.uppercased().hasPrefix("LT")
-            && (!inBackground || backgroundEnabled)
+        // Connection selection remains valid until an explicit disconnect or new scan.
+        hasSelectedConnection
     }
 
     func permitsRestoration(at date: Date) -> Bool {
-        guard permitsRecovery(inBackground: true), (0..<4).contains(retryAttempt), let startedAt else { return false }
+        guard keepsBackgroundConnection, permitsRecovery(inBackground: true), (0..<4).contains(retryAttempt), let startedAt else { return false }
         let age = date.timeIntervalSince(startedAt)
         return age.isFinite && age >= 0 && age < Self.restorationLifetime
     }
@@ -401,7 +402,7 @@ final class LightstickManager: NSObject, ObservableObject {
         rhythmIntent.setBackgroundEnabled(enabled)
         cancelRecoveryTasks()
         persistRhythmIntent()
-        if backgrounded && !rhythmIntent.keepsBackgroundConnection && !finalBlackPending
+        if backgrounded && !rhythmIntent.keepsBackgroundConnection && !rhythmIntent.hasSelectedConnection && !finalBlackPending
             && finalDisconnectTask == nil && phase != .disconnecting {
             startDisconnect(destination: .idle, message: "后台律动已关闭。")
         } else if gate.canBegin { scheduleReconnect() }
@@ -418,6 +419,11 @@ final class LightstickManager: NSObject, ObservableObject {
                 message = isRestoringSession ? "正在恢复设备会话，音乐律动可在前台重新开始。"
                     : "后台律动已启用，将继续跟随当前音频。"
             }
+        } else if rhythmIntent.hasSelectedConnection {
+            // Opening Settings to pair an A2DP speaker must retain the user's BLE selection.
+            clearPendingColors()
+            if gate.canBegin { scheduleReconnect() }
+            else { message = "宝宝剑连接已保留，可切换音箱或音乐 App。" }
         } else {
             cancelRhythmIntent()
             if finalBlackPending && phase == .ready {
@@ -461,10 +467,10 @@ final class LightstickManager: NSObject, ObservableObject {
         let cancelInitialization = connectionOrigin != .manual && phase != .ready && !gate.canBegin
         cancelRhythmIntent()
         clearPendingColors()
-        disconnectAfterDrain = backgrounded && maySendBlack
+        disconnectAfterDrain = backgrounded && maySendBlack && !rhythmIntent.hasSelectedConnection
         finalBlackPending = maySendBlack
         if maySendBlack { enqueue(LightRGB(red: 0, green: 0, blue: 0)) }
-        else if backgrounded || cancelInitialization { startDisconnect(destination: .idle, message: "音乐律动已停止。") }
+        else if (backgrounded && !rhythmIntent.hasSelectedConnection) || cancelInitialization { startDisconnect(destination: .idle, message: "音乐律动已停止。") }
     }
 
     private func cancelRhythmIntent(clearSelection: Bool = false) {
