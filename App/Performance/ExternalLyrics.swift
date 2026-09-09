@@ -7,6 +7,9 @@ struct ExternalTrack: Equatable {
     var album: String = ""
     var duration: Double
     var key: String { [Self.normalize(title), Self.normalize(artist), String(Int(duration.rounded()))].joined(separator:"|") }
+    func sameRecording(as other:Self) -> Bool {
+        Self.normalize(title)==Self.normalize(other.title) && Self.normalize(artist)==Self.normalize(other.artist) && abs(duration-other.duration)<=2
+    }
     static func normalize(_ text: String) -> String {
         text.folding(options:[.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale:Locale(identifier:"en_US_POSIX"))
             .components(separatedBy:.whitespacesAndNewlines).joined()
@@ -191,8 +194,7 @@ struct LyricsClient {
         let changed=lastPlayerKey != snapshot.track.key
         if changed {
             lastPlayerKey=snapshot.track.key
-            let preserve=track.map { ExternalTrack.normalize($0.title)==ExternalTrack.normalize(snapshot.track.title) &&
-                ExternalTrack.normalize($0.artist)==ExternalTrack.normalize(snapshot.track.artist) && abs($0.duration-snapshot.track.duration)<=2 } ?? false
+            let preserve=track?.sameRecording(as:snapshot.track) ?? false
             track=snapshot.track
             if !preserve {
                 cues=[];plainText="";selectedID=nil;manuallyAligned=false;offset=0
@@ -200,7 +202,8 @@ struct LyricsClient {
                 find(title:snapshot.track.title,artist:snapshot.track.artist,automatic:snapshot.track)
             }
         }
-        guard !manuallyAligned,let elapsed=snapshot.elapsed,let rate=snapshot.rate else { return }
+        guard !manuallyAligned,track?.sameRecording(as:snapshot.track)==true,
+              let elapsed=snapshot.elapsed,let rate=snapshot.rate else { return }
         clock = .init(anchor:elapsed,observed:snapshot.observed,rate:rate,duration:snapshot.track.duration,system:true,offset:offset)
         syncing=rate==0 ? "播放器已暂停" : "播放器同步 · 实验"
     }

@@ -101,6 +101,16 @@ final class ExternalLyricsTests:XCTestCase {
         XCTAssertTrue(lyrics.cues.isEmpty);XCTAssertEqual(lyrics.plainText,"原创测试文本")
         XCTAssertFalse(lyrics.hasPosition)
     }
+    @MainActor func testDifferentChosenVersionDoesNotBorrowPlayerClock() {
+        let lyrics=ExternalLyrics(preview:true,search:{ _,_ in [] })
+        lyrics.accept(snapshot())
+        var other=record(2);other.trackName="另一首"
+        lyrics.choose(other)
+        lyrics.accept(snapshot(elapsed:20))
+        XCTAssertFalse(lyrics.hasPosition)
+        XCTAssertEqual(lyrics.clock.rate,0)
+        lyrics.reset()
+    }
     @MainActor func testLyricsCacheRoundTrip() async throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)

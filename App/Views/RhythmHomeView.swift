@@ -151,13 +151,13 @@ struct RhythmHomeView: View {
             HStack(spacing: 10) {
                 Image(systemName: session.isRunning ? "waveform" : "sparkle").font(.system(size: 16, weight: .light))
                 Text(session.isRunning ? "回到共鸣" : (preview ? "预览律动" : "唤醒万兽"))
-                    .font(Atmosphere.title(21)).tracking(4)
+                    .font(.system(size:17,weight:.medium)).tracking(3)
             }
-            .foregroundStyle(Color(red: 0.12, green: 0.13, blue: 0.15))
+            .foregroundStyle(Atmosphere.silver)
             .frame(maxWidth: .infinity, minHeight: 57)
-            .background(LinearGradient(colors: [Color(white: 0.95), Color(red: 0.68, green: 0.70, blue: 0.75), Color(white: 0.91)], startPoint: .topLeading, endPoint: .bottomTrailing), in: Capsule())
-            .overlay(Capsule().inset(by: 3).strokeBorder(.black.opacity(0.15), lineWidth: 0.6))
-            .shadow(color: Atmosphere.ice.opacity(0.10), radius: 22, y: 2)
+            .background(LinearGradient(colors: [Color(white:0.17),Color(white:0.07),Color(white:0.11)], startPoint: .topLeading, endPoint: .bottomTrailing), in: Capsule())
+            .overlay(Capsule().strokeBorder(Atmosphere.metal.opacity(0.6),lineWidth:0.7))
+            .shadow(color: Atmosphere.ice.opacity(0.05), radius: 16, y: 2)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(session.isRunning ? "回到共鸣" : (preview ? "预览律动" : "唤醒万兽"))
@@ -251,33 +251,33 @@ struct RhythmHomeView: View {
                 pageHeading("聆听偏好", subtitle: "保留音乐的层次，让光自在呼吸")
                 VStack(alignment: .leading, spacing: 12) {
                     Toggle("后台律动", isOn: $session.backgroundEnabled).accessibilityIdentifier("background-toggle")
-                    Text("开启后，已启动的音乐会话在切换 App 和锁屏时继续拾音、分析与控灯。返回页面会显示当前状态。")
+                    Text("切换 App 或锁屏，继续当前的收音与控灯。")
                         .font(.footnote).foregroundStyle(Atmosphere.muted).lineSpacing(4)
                 }
                 VStack(alignment: .leading, spacing: 12) {
                     Toggle("柔和脉冲", isOn: $session.antiFlash).accessibilityIdentifier("anti-flash-toggle")
-                    Text("鼓点采用有间隔的柔和提亮，回落平滑，适合居家长时间听歌。")
+                    Text("轻提亮，慢回落，适合长时间聆听。")
                         .font(.footnote).foregroundStyle(Atmosphere.muted).lineSpacing(4)
                 }
                 RhythmAdjustments(session: session, compact: false)
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("声音来自哪里").font(Atmosphere.title(22))
+                DisclosureGroup("声音与播放设备") {
+                  VStack(alignment: .leading, spacing: 14) {
                     Text("手机麦克风聆听电视、电脑、音箱或另一台手机的外放音乐。音频短帧只在本机内存中分析。")
                         .font(.footnote).foregroundStyle(Atmosphere.muted).lineSpacing(5)
                     Text("同机外放可单独测试音量和路由兼容性。耳机内的音乐需要改用外放，让手机麦克风能够听到。")
                         .font(.footnote).foregroundStyle(Atmosphere.muted).lineSpacing(5)
-                }
+                  }.padding(.top,12)
+                }.font(.subheadline)
                 Button("重新校准房间声音") { session.recalibrate() }
                     .buttonStyle(.bordered).disabled(!session.isRunning).accessibilityIdentifier("recalibrate")
                 Text(session.message).font(.caption).foregroundStyle(Atmosphere.muted)
                 if session.phase != .idle {
                     Button("暂停音乐并熄灯") { session.stopFromUser() }.buttonStyle(.bordered).accessibilityIdentifier("settings-stop")
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("连续运行验证").font(.footnote.weight(.medium))
+                DisclosureGroup("后台状态与体验说明") {
                     Text("后台会话与恢复逻辑已接入。锁屏、来电、切换 App 及 30 / 60 分钟连续体验，需在你的 iPhone 与实剑上逐项核验。")
                         .font(.caption).foregroundStyle(Atmosphere.muted).lineSpacing(4)
-                }
+                }.font(.subheadline)
             }.padding(26).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }
     }
