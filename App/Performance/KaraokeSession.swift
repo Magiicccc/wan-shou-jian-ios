@@ -24,6 +24,7 @@ private final class VocalProbe: @unchecked Sendable {
 @MainActor
 final class KaraokeSession: ObservableObject {
     @Published private(set) var externalMusic = false
+    @Published private(set) var mediaPauseResult: MediaPauseResult = .idle
     @Published private(set) var recovering = false
     @Published private(set) var requestingPermission = false
     @Published private(set) var route = "开始后显示收音与播放设备"
@@ -47,6 +48,7 @@ final class KaraokeSession: ObservableObject {
     @Published var brightness = 0.45
     private let manager: LightstickManager
     private let preview: Bool
+    private let sendMediaPause: (Bool) -> MediaPauseResult
     private var player: AVAudioPlayer?
     private var engine: AVAudioEngine?
     private var reverb: AVAudioUnitReverb?
@@ -73,8 +75,10 @@ final class KaraokeSession: ObservableObject {
     var currentCue: LyricCue? { PerformanceScore.cue(at: position, in: cues) }
     var evidence: [VocalFrame] { frames.enumerated().filter { $0.offset.isMultiple(of: max(1,frames.count/100)) }.map(\.element) }
 
-    init(manager: LightstickManager, preview: Bool = false, recoveryDelay: UInt64 = 700_000_000) {
+    init(manager: LightstickManager, preview: Bool = false, recoveryDelay: UInt64 = 700_000_000,
+         sendMediaPause: ((Bool) -> MediaPauseResult)? = nil) {
         self.manager=manager;self.preview=preview
+        self.sendMediaPause=sendMediaPause ?? { ExternalMediaPause.send(preview:$0) }
         self.recoveryDelay=recoveryDelay
         if let url=Bundle.main.url(forResource:"NightVoyage",withExtension:"wav") { load(url, title: PerformanceScore.demoTitle) }
         if !preview,let data=UserDefaults.standard.data(forKey:"stage.song"),
@@ -325,6 +329,14 @@ final class KaraokeSession: ObservableObject {
             }
             guard let self,self.generation==token else { return }
             self.pause(); self.status="收音恢复暂未完成，检查音箱连接后点击开始重试。"
+        }
+    }
+
+    func pauseFromUser() {
+        pause()
+        if externalMusic {
+            mediaPauseResult=sendMediaPause(preview)
+            status="舞台已暂停，宝宝剑连接保留。" + mediaPauseResult.message
         }
     }
 

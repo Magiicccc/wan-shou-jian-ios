@@ -97,7 +97,7 @@ struct KaraokeView: View {
             }.font(.caption2).foregroundStyle(Atmosphere.muted)
             HStack(spacing:28) {
                 Button { console=true } label: { Image(systemName:"slider.vertical.3").frame(width:44,height:44) }.accessibilityLabel("混音控制")
-                Button { lastTouch=Date();if session.isSessionActive { session.pause() } else { session.start() } } label: {
+                Button { lastTouch=Date();if session.isSessionActive { session.pauseFromUser() } else { session.start() } } label: {
                     Image(systemName:session.isSessionActive ? "pause.fill" : "play.fill").font(.system(size:20,weight:.light))
                         .frame(width:64,height:64).background(.white.opacity(0.06),in:Circle())
                         .overlay(Circle().strokeBorder(Atmosphere.metal,lineWidth:1))
@@ -106,6 +106,7 @@ struct KaraokeView: View {
             }
             Text(session.analyzing ? "AI 正在分析，舞台保持本地运行" : session.status)
                 .font(.system(size:10)).foregroundStyle(Atmosphere.muted).lineLimit(2).multilineTextAlignment(.center)
+                .accessibilityIdentifier("stage-status")
         }.padding(.bottom,12)
     }
 
@@ -123,6 +124,13 @@ struct KaraokeView: View {
                 }
                 Section("光") { LabeledContent("亮度上限") { Slider(value:$session.brightness,in:0...1) } }
                 if session.externalMusic { Section("歌曲氛围") { Picker("配色",selection:$session.externalMood) { ForEach(SongMood.allCases,id:\.self) { Text($0.rawValue).tag($0) } } } }
+                if session.externalMusic {
+                    Section("媒体暂停实验") {
+                        Text(session.mediaPauseResult.message).font(.footnote).accessibilityIdentifier("media-pause-result")
+                        Button("暂停舞台与当前音乐") { session.pauseFromUser() }.accessibilityIdentifier("media-pause-test")
+                        Text("作用于这台 iPhone 的当前音乐播放器。播放状态请在音乐 App 核对；继续唱歌时，在音乐 App 恢复播放。").font(.footnote)
+                    }
+                }
                 Section("实时测量") {
                     LabeledContent("麦克风",value:session.hasMicrophone ? "正在收音" : "已关闭")
                     LabeledContent("声线频率",value:session.vocal.pitch>0 ? "\(Int(session.vocal.pitch)) Hz" : "等待稳定声线")

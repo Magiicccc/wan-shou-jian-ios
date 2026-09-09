@@ -11,6 +11,7 @@ enum RhythmPhase: String {
 @MainActor
 final class RhythmSession: ObservableObject {
     @Published private(set) var isRunning = false
+    @Published private(set) var mediaPauseResult: MediaPauseResult = .idle
     @Published private(set) var phase: RhythmPhase = .idle
     @Published private(set) var message = "开启后使用麦克风感知音乐，先进行两秒环境校准。"
     @Published private(set) var light = LightState.idle
@@ -43,6 +44,7 @@ final class RhythmSession: ObservableObject {
 
     private let manager: LightstickManager
     private let preview: Bool
+    private let sendMediaPause: (Bool) -> MediaPauseResult
     private let preferences: UserDefaults
     private var source: RhythmAudioSource?
     private var lifecycle = RhythmLifecycle()
@@ -60,8 +62,10 @@ final class RhythmSession: ObservableObject {
     private let recoveryDelayNanoseconds: UInt64
 
     init(manager: LightstickManager, preview: Bool = false, source: RhythmAudioSource? = nil,
-         recoveryDelayNanoseconds: UInt64 = 400_000_000, preferences: UserDefaults = .standard) {
+         recoveryDelayNanoseconds: UInt64 = 400_000_000, preferences: UserDefaults = .standard,
+         sendMediaPause: ((Bool) -> MediaPauseResult)? = nil) {
         self.manager = manager
+        self.sendMediaPause = sendMediaPause ?? { ExternalMediaPause.send(preview:$0) }
         self.preview = preview
         self.preferences = preferences
         self.source = source
@@ -131,6 +135,13 @@ final class RhythmSession: ObservableObject {
                 do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
             }
         }
+    }
+
+    func stopFromUser() {
+        let wasSynthetic = synthetic
+        stop()
+        mediaPauseResult = sendMediaPause(preview || wasSynthetic)
+        message += " " + mediaPauseResult.message
     }
 
     func stop() {

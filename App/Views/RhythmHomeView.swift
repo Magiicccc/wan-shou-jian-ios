@@ -93,7 +93,7 @@ struct RhythmHomeView: View {
                         Text(session.isRunning ? session.light.stage.rawValue : "静候，下一次共鸣")
                             .font(Atmosphere.title(21)).tracking(3)
                             .foregroundStyle(session.light.crown > 0.25 ? Atmosphere.gold : Atmosphere.silver)
-                        Text(preview ? "视觉预览 · 合成音乐演示" : (session.phase != .idle ? session.message : "听见房间里的音乐，让光自然流动"))
+                        Text(preview ? "视觉预览 · 合成音乐演示" : (session.phase != .idle || session.mediaPauseResult != .idle ? session.message : "听见房间里的音乐，让光自然流动"))
                             .font(.caption).foregroundStyle(Atmosphere.muted)
                             .multilineTextAlignment(.center)
                             .accessibilityIdentifier("rhythm-message")
@@ -271,7 +271,7 @@ struct RhythmHomeView: View {
                     .buttonStyle(.bordered).disabled(!session.isRunning).accessibilityIdentifier("recalibrate")
                 Text(session.message).font(.caption).foregroundStyle(Atmosphere.muted)
                 if session.phase != .idle {
-                    Button("停止律动并熄灯") { session.stop() }.buttonStyle(.bordered).accessibilityIdentifier("settings-stop")
+                    Button("暂停音乐并熄灯") { session.stopFromUser() }.buttonStyle(.bordered).accessibilityIdentifier("settings-stop")
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("连续运行验证").font(.footnote.weight(.medium))
@@ -417,5 +417,5 @@ struct ImmersiveRhythmView: View {
         }
     }
 
-    private func stop() { hideTask?.cancel(); session.stop(); dismiss() }
+    private func stop() { hideTask?.cancel(); session.stopFromUser(); dismiss() }
 }
