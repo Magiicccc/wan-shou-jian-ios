@@ -134,6 +134,9 @@ final class KaraokeSession: ObservableObject {
         vocal = .init(time:0,rms:0,pitch:0,confidence:0); energy=0; light = .idle
         report="唱完后点击结束，查看练习参考分与 AI 建议。"
         status="先开始收音，再切到网易云播放并跟唱；结束后返回复盘。"
+        if !preview,title != "网易云 · 自由演唱",!title.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+            externalLyrics.find(title:title)
+        }
     }
 
     @discardableResult func load(_ url: URL, title: String) -> Bool {

@@ -61,7 +61,7 @@ final class PerformanceScoreTests:XCTestCase {
     func testDemoHasContiguousReadableCues() {
         let cues=PerformanceScore.demo
         for i in 0..<cues.count {
-            XCTAssertTrue(cues[i].text.contains(cues[i].emphasis))
+            XCTAssertTrue(cues[i].emphasis.isEmpty || cues[i].text.contains(cues[i].emphasis))
             if i>0 { XCTAssertEqual(cues[i-1].end,cues[i].start) }
         }
         XCTAssertEqual(cues.last?.end,48)

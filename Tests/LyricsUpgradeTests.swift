@@ -2,6 +2,15 @@ import XCTest
 @testable import WanShouJian
 
 final class LyricsUpgradeTests:XCTestCase {
+    @MainActor func testCombinedSearchChoosesUniqueArtistAndSongWithoutManualAlignment() async {
+        let record=LyricRecord(id:-999,trackName:"夜航",artistName:"原创",duration:12,syncedLyrics:"[00:01]让夜色慢慢靠近",source:"网易云")
+        let lyrics=ExternalLyrics(preview:true,search:{_,_ in [record]})
+        lyrics.find(title:"原创 夜航")
+        try? await Task.sleep(nanoseconds:10_000_000)
+        XCTAssertEqual(lyrics.selectedID,-999)
+        XCTAssertFalse(lyrics.hasPosition)
+        XCTAssertEqual(lyrics.syncing,"正在自动定位")
+    }
     func testNetEaseSearchFetchesSameIDWithoutAuthentication() async throws {
         let configuration=URLSessionConfiguration.ephemeral
         configuration.protocolClasses=[LyricFixtureProtocol.self]

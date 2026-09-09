@@ -264,8 +264,13 @@ struct LyricsClient {
                 self.results=records;self.busy=false
                 if let automatic,let record=LyricRecord.automatic(in:records,for:automatic) { self.choose(record,preserveClock:true) }
                 else {
-                    let exact=records.filter { $0.hasTiming && ExternalTrack.normalize($0.trackName)==ExternalTrack.normalize(query) &&
-                        !artist.isEmpty && ExternalTrack.normalize($0.artistName)==ExternalTrack.normalize(artist) }
+                    let queryKey=ExternalTrack.normalize(query)
+                    let exact=records.filter {
+                        let name=ExternalTrack.normalize($0.trackName),singer=ExternalTrack.normalize($0.artistName)
+                        let separate=name==queryKey && !artist.isEmpty && singer==ExternalTrack.normalize(artist)
+                        let combined = !name.isEmpty && !singer.isEmpty && queryKey.contains(name) && queryKey.contains(singer)
+                        return $0.hasTiming && (separate || combined)
+                    }
                     if automatic==nil,exact.count==1 { self.choose(exact[0]) }
                     else { self.message=records.isEmpty ? "各歌词源暂未找到匹配曲目。" : "正在核对版本，可在下方查看曲目。" }
                 }

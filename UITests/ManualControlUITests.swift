@@ -122,6 +122,8 @@ final class ManualControlUITests: XCTestCase {
         let app=XCUIApplication();app.launchArguments=["--preview"];app.launch()
         XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10));app.buttons["tab-3"].tap()
         let play=app.buttons["stage-play"];XCTAssertTrue(play.waitForExistence(timeout:5));play.tap()
+        play.tap()
+        XCTAssertEqual(play.label,"开始舞台")
         let progress=app.sliders["stage-progress"]
         for (name,value) in [("14-silver-intimate",0.035),("15-rose-phrase",0.3),("16-amber-rising",0.42),("17-champagne-climax",0.54),("18-wine-tension",0.68)] {
             progress.adjust(toNormalizedSliderPosition:value)
@@ -129,7 +131,6 @@ final class ManualControlUITests: XCTestCase {
             if lyric.exists { XCTAssertLessThan(lyric.frame.maxY,play.frame.minY);XCTAssertGreaterThan(lyric.frame.minX,0) }
             attach(app,name:name)
         }
-        play.tap()
     }
 
     func testExternalMusicEntryAndReviewWorkWithoutImport() {
