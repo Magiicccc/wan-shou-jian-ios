@@ -11,7 +11,7 @@ struct KineticLyricsView:View {
             VStack(spacing:16) {
                 if let cue {
                     let progress=unit((time-cue.start)/max(0.1,cue.end-cue.start))
-                    LyricComposition(cue:cue,width:g.size.width,height:max(60,g.size.height-40))
+                    LyricComposition(cue:cue,width:g.size.width,height:max(60,g.size.height-40),time:time)
                         .scaleEffect(reduced ? 1 : 1+unit(energy)*0.025)
                         .offset(y:reduced ? 0 : (1-min(1,progress*8))*7)
                         .opacity(reduced ? 1 : 0.5+0.5*min(1,progress*8))
@@ -35,6 +35,7 @@ private struct LyricComposition:View {
     var cue:LyricCue
     var width:CGFloat
     var height:CGFloat
+    var time:Double
     private var groups:[String] { cue.groups ?? [cue.text] }
     private var color:Color {
         let palette=cue.palette ?? (cue.mood == .sorrow ? .rose : cue.mood == .tense ? .wine : cue.mood == .warm ? .champagne : .silver)
@@ -48,7 +49,7 @@ private struct LyricComposition:View {
         }
     }
     private var fontSize:CGFloat {
-        let target:CGFloat=cue.scene == .climax ? 38 : 30
+        let target:CGFloat=(cue.scene == .climax ? 36 : 28)+CGFloat(cue.intensity ?? 0.5)*4
         let rows=max(groups.count,Int(ceil(Double(cue.text.count)/10)))
         return min(target,width*0.092,max(16,height/CGFloat(max(1,rows))/1.6))
     }
@@ -60,7 +61,7 @@ private struct LyricComposition:View {
     var body:some View {
         ZStack {
             if cue.scene == .climax || cue.scene == .echo {
-                Ellipse().fill(color.opacity(0.09)).blur(radius:28).frame(height:60)
+                Ellipse().fill(color.opacity(0.04+0.08*(cue.intensity ?? 0.5))).blur(radius:28).frame(height:60)
             }
             if cue.scene == .intimate,groups.count==2,groups[0].count<=4,height>=150 {
                 HStack(spacing:24) {
@@ -87,6 +88,14 @@ private struct LyricComposition:View {
         text.foregroundColor=color.opacity(0.9)
         let base=groups.prefix(index).reduce(0){$0+$1.count}
         let focus=cue.focusStart ?? cue.text.range(of:cue.emphasis).map{cue.text.distance(from:cue.text.startIndex,to:$0.lowerBound)} ?? 0
+        for word in cue.words ?? [] where time>=word.start && time<word.end {
+            let lower=max(base,word.offset),upper=min(base+group.count,word.offset+word.text.count)
+            if lower<upper {
+                let a=text.index(text.startIndex,offsetByCharacters:lower-base)
+                let b=text.index(text.startIndex,offsetByCharacters:upper-base)
+                text[a..<b].foregroundColor = .white
+            }
+        }
         if !cue.emphasis.isEmpty,focus>=base,focus+cue.emphasis.count<=base+group.count {
             let start=text.index(text.startIndex,offsetByCharacters:focus-base)
             let end=text.index(start,offsetByCharacters:cue.emphasis.count)

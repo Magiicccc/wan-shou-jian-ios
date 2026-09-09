@@ -29,19 +29,29 @@ struct NetEaseLyrics {
             .init(name:"type",value:"1"),.init(name:"limit",value:"30"),.init(name:"offset",value:"0")])
         let response=try JSONDecoder().decode(SearchResponse.self,from:data)
         guard response.code==200 else { throw LyricsError.service }
-        let songs=(response.result?.songs ?? []).filter { $0.id>0 && $0.duration.isFinite && $0.duration>0 && $0.duration<=7_200_000 }
+        let queryKey=ExternalTrack.normalize(title)
+        let songs=(response.result?.songs ?? []).filter {
+            let name=ExternalTrack.normalize($0.name)
+            return $0.id>0 && $0.duration.isFinite && $0.duration>0 && $0.duration<=7_200_000 &&
+                !queryKey.isEmpty && (name.contains(queryKey) || queryKey.contains(name))
+        }
         var records:[LyricRecord]=[]
         // The first result is the strongest candidate. Bound lyric requests per search.
         for song in songs.prefix(5) {
             try Task.checkCancellation()
             var record=song.record
             do {
-                let bytes=try await get("/api/song/lyric",items:[.init(name:"id",value:String(song.id)),
-                    .init(name:"lv",value:"-1"),.init(name:"kv",value:"-1"),.init(name:"tv",value:"-1")])
+                let bytes=try await get("/api/song/lyric/v1",items:[.init(name:"id",value:String(song.id)),
+                    .init(name:"lv",value:"0"),.init(name:"kv",value:"0"),.init(name:"tv",value:"0"),
+                    .init(name:"yv",value:"0"),.init(name:"rv",value:"0"),.init(name:"cp",value:"false")])
                 let lyrics=try JSONDecoder().decode(Response.self,from:bytes)
-                if lyrics.code==200 { record.syncedLyrics=lyrics.lrc?.lyric }
+                if lyrics.code==200 { record.syncedLyrics=lyrics.lrc?.lyric;record.wordLyrics=lyrics.yrc?.lyric }
             } catch is CancellationError { throw CancellationError() }
             catch { /* Keep metadata so a source failure never hides the recording. */ }
+            if !record.hasTiming {
+                if let bytes=try? await get("/api/song/lyric",items:[.init(name:"id",value:String(song.id)),.init(name:"lv",value:"-1")]),
+                   let lyrics=try? JSONDecoder().decode(Response.self,from:bytes),lyrics.code==200 { record.syncedLyrics=lyrics.lrc?.lyric }
+            }
             records.append(record)
         }
         return records

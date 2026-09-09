@@ -118,6 +118,20 @@ final class ManualControlUITests: XCTestCase {
         attach(app,name:"08-ai-settings")
     }
 
+    func testSemanticLyricCompositionsStayInsideStage() {
+        let app=XCUIApplication();app.launchArguments=["--preview"];app.launch()
+        XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10));app.buttons["tab-3"].tap()
+        let play=app.buttons["stage-play"];XCTAssertTrue(play.waitForExistence(timeout:5));play.tap()
+        let progress=app.sliders["stage-progress"]
+        for (name,value) in [("14-silver-intimate",0.035),("15-rose-phrase",0.3),("16-amber-rising",0.42),("17-champagne-climax",0.54),("18-wine-tension",0.68)] {
+            progress.adjust(toNormalizedSliderPosition:value)
+            let lyric=app.otherElements["stage-current-lyric"].firstMatch
+            if lyric.exists { XCTAssertLessThan(lyric.frame.maxY,play.frame.minY);XCTAssertGreaterThan(lyric.frame.minX,0) }
+            attach(app,name:name)
+        }
+        play.tap()
+    }
+
     func testExternalMusicEntryAndReviewWorkWithoutImport() {
         let app=XCUIApplication()
         app.launchArguments=["--preview"]

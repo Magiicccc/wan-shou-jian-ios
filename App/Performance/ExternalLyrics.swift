@@ -68,8 +68,12 @@ struct LyricRecord: Codable, Identifiable, Equatable {
     var plainLyrics: String?
     var syncedLyrics: String?
     var source: String? = nil
+    var wordLyrics:String? = nil
     var sourceName:String { source ?? "LRCLIB" }
-    var hasTiming: Bool { !(syncedLyrics?.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ?? true) }
+    var hasTiming: Bool {
+        !(syncedLyrics?.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ?? true) ||
+        !(wordLyrics?.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ?? true)
+    }
     var track: ExternalTrack { .init(title:trackName,artist:artistName,album:albumName ?? "",duration:duration) }
     func matches(_ other: ExternalTrack) -> Bool {
         duration.isFinite && abs(duration-other.duration)<=2 &&
@@ -82,7 +86,7 @@ struct LyricRecord: Codable, Identifiable, Equatable {
         let album=exact.filter { !track.album.isEmpty && ExternalTrack.normalize($0.albumName ?? "")==ExternalTrack.normalize(track.album) }
         let choices=album.isEmpty ? exact : album
         // Duplicate releases with identical timelines are safe; differing versions need a choice.
-        guard let first=choices.first, choices.allSatisfy({ $0.syncedLyrics==first.syncedLyrics }) else { return nil }
+        guard let first=choices.first, choices.allSatisfy({ $0.syncedLyrics==first.syncedLyrics && $0.wordLyrics==first.wordLyrics }) else { return nil }
         return first
     }
 }
@@ -186,7 +190,7 @@ struct LyricsClient {
     var currentCue:LyricCue? { PerformanceScore.cue(at:position(),in:cues) }
     var nextCue:LyricCue? { cues.first { $0.start>position() } }
     var hasPosition:Bool {
-        manuallyAligned || (clock.system && ProcessInfo.processInfo.systemUptime-clock.observed<8)
+        manuallyAligned || (clock.system && ((!active && clock.rate==0) || ProcessInfo.processInfo.systemUptime-clock.observed<8))
     }
     func accept(words:[HeardWord]) {
         let now=ProcessInfo.processInfo.systemUptime
@@ -276,9 +280,10 @@ struct LyricsClient {
         epoch += 1;lookup?.cancel();busy=false
         let keep=preserveClock || (track.map { record.matches($0) } ?? false)
         track=record.track;selectedID=record.id;plainText=String((record.plainLyrics ?? "").prefix(100_000))
-        cues=(try? PerformanceScore.parseLRC(record.syncedLyrics ?? "",duration:record.duration)) ?? []
+        cues=(try? PerformanceScore.parseYRC(record.wordLyrics ?? "",duration:record.duration)) ??
+            (try? PerformanceScore.parseLRC(record.syncedLyrics ?? "",duration:record.duration)) ?? []
         if !keep { clock=LyricClock(duration:record.duration);offset=0;manuallyAligned=false;audioAligned=false;lastHeardTime = -.infinity;syncing="正在自动定位" }
-        message=cues.isEmpty ? "已找到曲目，正在等待可用的时间轴歌词。" : "句级歌词 · \(record.sourceName) · 自动定位"
+        message=cues.isEmpty ? "已找到曲目，正在等待可用的时间轴歌词。" : "\(cues.contains(where:{$0.words != nil}) ? "逐字歌词" : "句级歌词") · \(record.sourceName) · 自动定位"
         cache.removeAll { $0.id==record.id };cache.insert(record,at:0);cache=Array(cache.prefix(20))
         if let url=cacheURL,let data=try? JSONEncoder().encode(cache),data.count<=2_000_000 { try? data.write(to:url,options:.atomic) }
     }

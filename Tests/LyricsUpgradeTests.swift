@@ -2,6 +2,25 @@ import XCTest
 @testable import WanShouJian
 
 final class LyricsUpgradeTests:XCTestCase {
+    func testNetEaseSearchFetchesSameIDWithoutAuthentication() async throws {
+        let configuration=URLSessionConfiguration.ephemeral
+        configuration.protocolClasses=[LyricFixtureProtocol.self]
+        let session=URLSession(configuration:configuration)
+        defer { session.invalidateAndCancel() }
+        let records=try await NetEaseLyrics(session:session).search(title:"Night",artist:"Original")
+        XCTAssertEqual(records.count,1)
+        XCTAssertEqual(records[0].id,-999)
+        XCTAssertTrue(records[0].hasTiming)
+        XCTAssertTrue(records[0].syncedLyrics?.contains("Original line") ?? false)
+    }
+    func testWordTimingPreservesRealTimesAndRejectsCorruption() throws {
+        let cues=try PerformanceScore.parseYRC("[1000,2000](1000,500,0)夜(1500,1500,0)航",duration:5)
+        XCTAssertEqual(cues[0].text,"夜航")
+        XCTAssertEqual(cues[0].words?[1].start,1.5)
+        XCTAssertEqual(cues[0].words?[1].offset,1)
+        XCTAssertThrowsError(try PerformanceScore.parseYRC("[1000,2000](900,500,0)夜",duration:5))
+        XCTAssertThrowsError(try PerformanceScore.parseYRC("[1000,2000](1000,5000,0)夜",duration:5))
+    }
     func testNetEaseMetadataUsesMillisecondsAndSourceSafeIdentity() throws {
         let data=Data(#"{"id":3324801986,"name":"Example (Live)","duration":276301,"artists":[{"name":"Test"}],"album":{"name":"Session"}}"#.utf8)
         let record=try JSONDecoder().decode(NetEaseSong.self,from:data).record
@@ -46,4 +65,23 @@ final class LyricsUpgradeTests:XCTestCase {
         cues[0].start += 1
         XCTAssertNotEqual(original,DirectorCache.key(cues:cues,settings:.init()))
     }
+}
+
+private final class LyricFixtureProtocol:URLProtocol {
+    override class func canInit(with request:URLRequest)->Bool { true }
+    override class func canonicalRequest(for request:URLRequest)->URLRequest { request }
+    override func startLoading() {
+        let body:String
+        if request.url!.path=="/api/search/get" {
+            body=#"{"code":200,"result":{"songs":[{"id":999,"name":"Night","duration":10000,"artists":[{"name":"Original"}],"album":{"name":"Study"}}]}}"#
+        } else {
+            guard URLComponents(url:request.url!,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{$0.name=="id"})?.value=="999" else {
+                client?.urlProtocol(self,didFailWithError:URLError(.badURL));return
+            }
+            body=#"{"code":200,"lrc":{"lyric":"[00:01.00]Original line"}}"#
+        }
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didLoad:Data(body.utf8));client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

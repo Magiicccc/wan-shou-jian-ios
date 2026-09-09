@@ -17,6 +17,7 @@ enum TypeScene: String, Codable, CaseIterable {
 }
 
 enum LyricPalette:String,Codable,CaseIterable { case silver, mist, rose, wine, amber, champagne }
+struct LyricWord:Codable,Equatable { var start:Double;var end:Double;var offset:Int;var text:String }
 
 struct LyricCue: Identifiable, Codable, Equatable {
     var id: Int
@@ -30,6 +31,7 @@ struct LyricCue: Identifiable, Codable, Equatable {
     var palette:LyricPalette? = nil
     var intensity:Double? = nil
     var focusStart:Int? = nil
+    var words:[LyricWord]? = nil
 }
 
 enum ScoreError: LocalizedError {
@@ -49,11 +51,11 @@ enum ScoreError: LocalizedError {
 enum PerformanceScore {
     static let demoTitle = "夜航 · 原创舞台练习"
     static let demo: [LyricCue] = [
-        .init(id: 0, start: 0, end: 6, text: "让夜色慢慢靠近", emphasis: "夜色", scene: .intimate, mood: .reflective),
+        .init(id: 0, start: 0, end: 6, text: "让夜色慢慢靠近", emphasis: "", scene: .intimate, mood: .reflective, groups:["让夜色","慢慢靠近"],palette:.silver),
         .init(id: 1, start: 6, end: 12, text: "把回声留在掌心", emphasis: "回声", scene: .echo, mood: .sorrow),
         .init(id: 2, start: 12, end: 18, text: "那些未说完的话", emphasis: "未说完", scene: .falling, mood: .sorrow),
-        .init(id: 3, start: 18, end: 24, text: "此刻终于有了声音", emphasis: "声音", scene: .rising, mood: .tense),
-        .init(id: 4, start: 24, end: 30, text: "向着光抬起头", emphasis: "光", scene: .climax, mood: .warm),
+        .init(id: 3, start: 18, end: 24, text: "此刻终于有了声音", emphasis: "", scene: .rising, mood: .tense,groups:["此刻终于","有了声音"],palette:.amber),
+        .init(id: 4, start: 24, end: 30, text: "向着光抬起头", emphasis: "", scene: .climax, mood: .warm,palette:.champagne),
         .init(id: 5, start: 30, end: 36, text: "让心跳穿过寂静", emphasis: "心跳", scene: .confrontation, mood: .tense),
         .init(id: 6, start: 36, end: 42, text: "我仍听见你的回音", emphasis: "回音", scene: .echo, mood: .reflective),
         .init(id: 7, start: 42, end: 48, text: "在黎明以前相拥", emphasis: "相拥", scene: .intimate, mood: .warm)
@@ -97,6 +99,30 @@ enum PerformanceScore {
 
     static func cue(at time: Double, in cues: [LyricCue]) -> LyricCue? {
         cues.last { time >= $0.start && time < $0.end }
+    }
+
+    static func parseYRC(_ input:String,duration:Double) throws -> [LyricCue] {
+        guard input.utf8.count<=512_000,duration.isFinite,duration>0 else { throw ScoreError.invalidLyrics }
+        let linePattern=try NSRegularExpression(pattern:#"^\[(\d+),(\d+)\]"#)
+        let wordPattern=try NSRegularExpression(pattern:#"\((\d+),(\d+),\d+\)([^\(]*)"#)
+        var cues:[LyricCue]=[]
+        for line in input.components(separatedBy:.newlines) {
+            let ns=line as NSString,range=NSRange(location:0,length:(line as NSString).length)
+            guard let header=linePattern.firstMatch(in:line,range:range),
+                  let ms=Double(ns.substring(with:header.range(at:1))),let length=Double(ns.substring(with:header.range(at:2))) else { continue }
+            let start=ms/1000,end=(ms+length)/1000
+            guard start.isFinite,end.isFinite,start>=0,end>start,end<=duration+0.1 else { throw ScoreError.invalidLyrics }
+            var words:[LyricWord]=[],text=""
+            for match in wordPattern.matches(in:line,range:range) {
+                guard let value=Double(ns.substring(with:match.range(at:1))),let span=Double(ns.substring(with:match.range(at:2))) else { throw ScoreError.invalidLyrics }
+                let a=value/1000,b=(value+span)/1000,part=ns.substring(with:match.range(at:3))
+                guard a.isFinite,b.isFinite,a>=start,b>=a,b<=end+0.05,a>=(words.last?.end ?? start)-0.01 else { throw ScoreError.invalidLyrics }
+                words.append(.init(start:a,end:b,offset:text.count,text:part));text += part
+            }
+            guard !text.isEmpty,text.count<=100,!words.isEmpty,start>=(cues.last?.end ?? 0)-0.01 else { throw ScoreError.invalidLyrics }
+            cues.append(.init(id:cues.count,start:start,end:min(end,duration),text:text,emphasis:"",scene:.narrative,mood:.reflective,words:words))
+        }
+        guard !cues.isEmpty,cues.count<=2000 else { throw ScoreError.invalidLyrics };return cues
     }
 
     struct Direction: Codable {
