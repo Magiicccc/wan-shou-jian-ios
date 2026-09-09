@@ -155,14 +155,18 @@ struct KaraokeView: View {
                 Section("评分范围") {
                     Text("提供持续声线稳定度、收音电平参考分及 AI 练习建议。原唱与伴奏会进入麦克风，建议选伴奏版、降低音箱音量并靠近手机演唱。歌词可在网易云中查看。")
                 }
-                Section {
-                    Button("开始外部音乐演唱") {
-                        let name=songTitle.trimmingCharacters(in:.whitespacesAndNewlines)
-                        session.useExternalMusic(title:name.isEmpty ? "网易云 · 自由演唱" : name)
-                        session.start(); externalSetup=false; controls=true; lastTouch=Date()
-                    }.accessibilityIdentifier("external-start")
-                }
-            }.navigationTitle("跟着网易云唱").toolbar { Button("完成") { externalSetup=false } }
+            }
+            .safeAreaInset(edge:.bottom) {
+                Button("开始外部音乐演唱") {
+                    let name=songTitle.trimmingCharacters(in:.whitespacesAndNewlines)
+                    session.useExternalMusic(title:name.isEmpty ? "网易云 · 自由演唱" : name)
+                    session.start(); externalSetup=false; controls=true; lastTouch=Date()
+                }.font(.headline).frame(maxWidth:.infinity).padding(.vertical,16)
+                    .foregroundStyle(.black).background(Atmosphere.silver,in:RoundedRectangle(cornerRadius:16))
+                    .padding(.horizontal,20).padding(.vertical,12).background(.ultraThinMaterial)
+                    .accessibilityIdentifier("external-start")
+            }
+            .navigationTitle("跟着网易云唱").toolbar { Button("完成") { externalSetup=false } }
         }.preferredColorScheme(.dark)
     }
     private var client:DirectorClient { let s=DirectorSettings.load();return .init(settings:s,key:DirectorKeychain.read(for:s.credentialID)) }

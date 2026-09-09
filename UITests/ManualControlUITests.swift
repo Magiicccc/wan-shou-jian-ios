@@ -127,7 +127,7 @@ final class ManualControlUITests: XCTestCase {
         app.buttons["external-music"].tap()
         let start=app.buttons["external-start"]
         XCTAssertTrue(start.waitForExistence(timeout:5))
-        if !start.isHittable { app.swipeUp() }
+        XCTAssertTrue(start.isHittable)
         attach(app,name:"09-external-music-setup")
         start.tap()
         XCTAssertTrue(app.staticTexts["external-elapsed"].waitForExistence(timeout:5))
