@@ -4,6 +4,7 @@ struct KineticLyricsView: View {
     var cue: LyricCue?
     var time: Double
     var energy: Double
+    var nextCue:LyricCue? = nil
     @Environment(\.accessibilityReduceMotion) private var reduced
 
     var body: some View {
@@ -11,16 +12,23 @@ struct KineticLyricsView: View {
             if let cue {
                 let progress = unit((time-cue.start)/max(0.1,cue.end-cue.start))
                 let fade = min(1,min(progress*9,(1-progress)*10))
-                let side: CGFloat = min(geometry.size.width,430,geometry.size.height*1.55)
-                ZStack {
+                let lyricHeight=max(70,geometry.size.height-34)
+                let side: CGFloat = min(geometry.size.width,430,lyricHeight*1.55)
+                VStack(spacing:12) {
+                  ZStack {
                     if cue.scene == .echo {
                         LyricEcho(word:cue.emphasis,side:side,color:Atmosphere.color(cue.mood.rgb))
                     }
-                    LyricPhrase(cue:cue,side:side,height:geometry.size.height,energy:energy,reduced:reduced)
+                    LyricPhrase(cue:cue,side:side,height:lyricHeight,energy:energy,reduced:reduced)
                         .rotationEffect(.degrees(reduced ? 0 : cue.scene == .confrontation ? -3 : 0))
                         .offset(y:reduced ? 0 : cue.scene == .falling ? progress*20 : (1-fade)*10)
+                  }.opacity(reduced ? 1 : max(0.35,fade)).frame(maxHeight:.infinity)
+                  if let nextCue {
+                    Text(nextCue.text).font(.system(size:12,weight:.regular)).tracking(1)
+                        .foregroundStyle(Atmosphere.muted.opacity(0.8)).lineLimit(1)
+                        .accessibilityIdentifier("stage-next-lyric")
+                  }
                 }
-                .opacity(reduced ? 1 : fade)
                 .frame(maxWidth:.infinity,maxHeight:.infinity)
                 .accessibilityElement(children:.ignore).accessibilityLabel(cue.text)
                 .accessibilityIdentifier("stage-current-lyric")
@@ -71,7 +79,7 @@ private struct LyricPhrase: View {
         }
     }
     private var horizontal: some View {
-        VStack(spacing:12) {
+        VStack(spacing:8) {
             subtitle(parts.first ?? "")
             Text(cue.emphasis).font(Atmosphere.title(side*(cue.scene == .climax ? 0.19 : 0.145)))
                 .tracking(cue.scene == .intimate ? 10 : 3)
@@ -82,7 +90,7 @@ private struct LyricPhrase: View {
         }
     }
     private func subtitle(_ text: String) -> some View {
-        Text(text).font(Atmosphere.title(side*0.062)).tracking(4)
-            .foregroundStyle(Atmosphere.muted).lineLimit(2).minimumScaleFactor(0.6)
+        Text(text).font(.system(size:max(13,side*0.065),weight:.regular)).tracking(2)
+            .foregroundStyle(Atmosphere.silver.opacity(0.82)).lineLimit(2).minimumScaleFactor(0.75)
     }
 }

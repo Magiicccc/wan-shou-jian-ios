@@ -143,6 +143,34 @@ final class ManualControlUITests: XCTestCase {
         attach(app,name:"11-external-review")
     }
 
+    func testExternalLyricsCanBeAlignedWithoutImportOrNetwork() {
+        let app=XCUIApplication()
+        app.launchArguments=["--preview"]
+        app.launch()
+        XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10))
+        app.buttons["tab-3"].tap()
+        app.buttons["external-music"].tap()
+        app.buttons["external-start"].tap()
+        let lyrics=app.buttons["open-lyrics"]
+        XCTAssertTrue(lyrics.waitForExistence(timeout:5))
+        lyrics.tap()
+        let demo=app.buttons["lyrics-preview"]
+        for _ in 0..<5 { if demo.isHittable { break };app.swipeUp() }
+        XCTAssertTrue(demo.isHittable);demo.tap()
+        let line=app.buttons["lyric-line-1"]
+        for _ in 0..<6 {
+            if line.isHittable { break }
+            app.swipeDown()
+        }
+        XCTAssertTrue(line.isHittable)
+        attach(app,name:"12-lyrics-alignment")
+        line.tap()
+        XCTAssertTrue(app.otherElements["stage-current-lyric"].waitForExistence(timeout:5) || app.staticTexts["stage-current-lyric"].exists)
+        XCTAssertTrue(app.buttons["open-lyrics"].label.contains("手动对齐"))
+        attach(app,name:"13-external-synced-lyrics")
+        app.buttons["stage-play"].tap()
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let scroll = app.scrollViews.firstMatch
         let primary = app.buttons["primary-control"]

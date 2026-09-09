@@ -48,6 +48,7 @@ final class KaraokeSession: ObservableObject {
     @Published var brightness = 0.45
     private let manager: LightstickManager
     private let preview: Bool
+    let externalLyrics: ExternalLyrics
     private let sendMediaPause: (Bool) -> MediaPauseResult
     private var player: AVAudioPlayer?
     private var engine: AVAudioEngine?
@@ -72,12 +73,16 @@ final class KaraokeSession: ObservableObject {
     private var takeGeneration = 0
     private struct SavedSong: Codable { var file:String;var title:String;var cues:[LyricCue] }
     private var songDirectory:URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Songs") }
-    var currentCue: LyricCue? { PerformanceScore.cue(at: position, in: cues) }
+    var lyricPosition:Double { externalMusic ? externalLyrics.position() : position }
+    var currentCue: LyricCue? { externalMusic ? (externalLyrics.hasPosition ? externalLyrics.currentCue : nil) : PerformanceScore.cue(at: position, in: cues) }
+    var nextCue: LyricCue? { externalMusic ? externalLyrics.nextCue : cues.first { $0.start>position } }
+    var assessment:PracticeAssessment { PracticeAssessment.evaluate(frames) }
     var evidence: [VocalFrame] { frames.enumerated().filter { $0.offset.isMultiple(of: max(1,frames.count/100)) }.map(\.element) }
 
     init(manager: LightstickManager, preview: Bool = false, recoveryDelay: UInt64 = 700_000_000,
          sendMediaPause: ((Bool) -> MediaPauseResult)? = nil) {
         self.manager=manager;self.preview=preview
+        self.externalLyrics=ExternalLyrics(preview:preview)
         self.sendMediaPause=sendMediaPause ?? { ExternalMediaPause.send(preview:$0) }
         self.recoveryDelay=recoveryDelay
         if let url=Bundle.main.url(forResource:"NightVoyage",withExtension:"wav") { load(url, title: PerformanceScore.demoTitle) }
@@ -119,6 +124,7 @@ final class KaraokeSession: ObservableObject {
 
     func useExternalMusic(title: String = "网易云 · 自由演唱") {
         pause(); importGeneration += 1; takeGeneration += 1
+        externalLyrics.reset()
         externalMusic=true; self.title=String(title.prefix(100)); cues=[]; bins=[]; frames=[]
         duration=1200; position=0; externalClock=PerformanceClock(); monitorEnabled=false
         vocal = .init(time:0,rms:0,pitch:0,confidence:0); energy=0; light = .idle
@@ -133,6 +139,7 @@ final class KaraokeSession: ObservableObject {
             guard p.duration > 0, p.duration <= 1200 else { status="请选择二十分钟以内的音频。";return false }
             p.prepareToPlay();p.volume=Float(accompanimentVolume)
             externalMusic=false; takeGeneration += 1
+            externalLyrics.reset()
             self.player=p;self.assetURL=url;self.title=title;duration=p.duration;position=0;frames=[];bins=[]
             let token=importGeneration
             Task {
@@ -174,11 +181,14 @@ final class KaraokeSession: ObservableObject {
     }
 
     func importLyrics(_ url: URL) {
-        guard !externalMusic else { status="外部播放的歌词请在音乐 App 查看；本地音频可导入同步歌词。"; return }
         let granted=url.startAccessingSecurityScopedResource();defer { if granted { url.stopAccessingSecurityScopedResource() } }
         do {
             let size=try url.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0
             guard size<=512_000 else { throw ScoreError.invalidLyrics }
+            if externalMusic {
+                try externalLyrics.importLRC(String(contentsOf:url,encoding:.utf8),title:url.deletingPathExtension().lastPathComponent)
+                status="歌词已导入，打开「歌词与同步」对齐当前句。";return
+            }
             cues=try PerformanceScore.parseLRC(String(contentsOf:url,encoding:.utf8),duration:duration)
             saveSong()
             status="歌词已导入 · 句级动态编排"
@@ -259,7 +269,7 @@ final class KaraokeSession: ObservableObject {
             manager.submitRhythmColor(LightState.idle.color)
             route=HomeAudioRouting.summary
         }
-        if externalMusic { externalClock.resume(at:ProcessInfo.processInfo.systemUptime) }
+        if externalMusic { externalClock.resume(at:ProcessInfo.processInfo.systemUptime);externalLyrics.start() }
         else {
             player?.volume=Float(accompanimentVolume)
             guard player?.play()==true else { throw ScoreError.malformedResponse }
@@ -280,6 +290,7 @@ final class KaraokeSession: ObservableObject {
         generation += 1; playing=false; hasMicrophone=false
         timer?.cancel(); timer=nil
         if freezeExternalClock {
+            externalLyrics.stop()
             externalClock.pause(at:ProcessInfo.processInfo.systemUptime)
             if externalMusic { position=min(duration,externalClock.elapsed(at:ProcessInfo.processInfo.systemUptime)) }
         }
@@ -372,7 +383,7 @@ final class KaraokeSession: ObservableObject {
         }
         energy=follow(energy,target,0.05,0.2)
         let beat=max(0,target-energy)*2
-        let mood=externalMusic ? externalMood : currentCue?.mood ?? .reflective
+        let mood=currentCue?.mood ?? (externalMusic ? externalMood : .reflective)
         let rgb=mood.rgb
         let level=unit(brightness)*unit(0.09+energy*0.72+min(0.15,vocal.rms)+beat*0.16)
         let targets=[Double(rgb.red),Double(rgb.green),Double(rgb.blue)].map { $0*level }
@@ -385,6 +396,18 @@ final class KaraokeSession: ObservableObject {
     }
 
     func direct(using client: DirectorClient) async {
+        if externalMusic {
+            guard !analyzing,!externalLyrics.cues.isEmpty else { return }
+            analyzing=true;defer { analyzing=false }
+            let original=externalLyrics.cues, id=externalLyrics.selectedID
+            do {
+                let plan=try await client.plan(cues:original,bins:[])
+                guard externalMusic,externalLyrics.selectedID==id,externalLyrics.cues==original else { return }
+                try externalLyrics.apply(plan)
+                status="AI 情绪与歌词分镜已应用。"
+            } catch { status=error.localizedDescription }
+            return
+        }
         guard !analyzing,!cues.isEmpty else { return };analyzing=true;defer { analyzing=false }
         let original=cues;let token=importGeneration
         do {

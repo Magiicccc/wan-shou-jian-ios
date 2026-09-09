@@ -12,6 +12,7 @@ struct KaraokeView: View {
     @State private var menu=false
     @State private var controls=true
     @State private var externalSetup=false
+    @State private var lyricsSheet=false
     @State private var songTitle=""
     @State private var lastTouch=Date()
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -32,12 +33,9 @@ struct KaraokeView: View {
                         .frame(height:max(140,(g.size.height-265)*0.56)).clipped().allowsHitTesting(false)
                     Group {
                         if session.externalMusic {
-                            VStack(spacing:12) {
-                                Text(session.hasMicrophone ? "此 刻，听 见 你" : "跟 着 喜 欢 的 歌 唱").font(Atmosphere.title(24))
-                                Text("网易云播放 · iPhone 收音 · 唱完 AI 复盘").font(.system(size:12)).foregroundStyle(Atmosphere.muted)
-                            }
-                        } else { KineticLyricsView(cue:session.currentCue,time:session.position,energy:session.energy) }
-                    }.frame(height:max(100,(g.size.height-265)*0.44)).padding(.horizontal,28).clipped().allowsHitTesting(false)
+                            ExternalLyricStage(lyrics:session.externalLyrics,energy:session.energy,time:session.position) { lyricsSheet=true }
+                        } else { KineticLyricsView(cue:session.currentCue,time:session.position,energy:session.energy,nextCue:session.nextCue) }
+                    }.frame(height:max(150,(g.size.height-265)*0.44)).padding(.horizontal,28).clipped()
                     Spacer(minLength:4)
                     if controls || !session.playing || voiceOver { transport.padding(.horizontal,24).transition(.opacity) }
                 }
@@ -59,9 +57,11 @@ struct KaraokeView: View {
         .sheet(isPresented:$ai) { DirectorSettingsView() }
         .sheet(isPresented:$showingReport) { reportSheet }
         .sheet(isPresented:$externalSetup) { externalSheet }
+        .sheet(isPresented:$lyricsSheet) { LyricsSheet(lyrics:session.externalLyrics) }
         .confirmationDialog("舞台菜单",isPresented:$menu,titleVisibility:.visible) {
             Button("导入音频") { lyricsImport=false;importer=true }
             Button("网易云 / 外部播放") { externalSetup=true }
+            if session.externalMusic { Button("歌词与同步") { lyricsSheet=true } }
             Button("导入 LRC 歌词") { lyricsImport=true;importer=true }
             Button("原创演示") { session.useDemo() }
             Button("AI 接口设置") { ai=true }
@@ -74,7 +74,7 @@ struct KaraokeView: View {
         HStack(alignment:.top) {
             VStack(alignment:.leading,spacing:5) {
                 Text("私 人 舞 台").font(.system(size:10,weight:.medium)).tracking(4).foregroundStyle(Atmosphere.muted)
-                Text(session.title).font(Atmosphere.title(21)).lineLimit(1)
+                Text(session.externalMusic ? session.externalLyrics.track?.title ?? session.title : session.title).font(Atmosphere.title(21)).lineLimit(1)
             }
             Spacer()
             Button { menu=true } label: { Image(systemName:"ellipsis").frame(width:44,height:44).contentShape(Rectangle()) }
@@ -136,7 +136,7 @@ struct KaraokeView: View {
                     LabeledContent("声线频率",value:session.vocal.pitch>0 ? "\(Int(session.vocal.pitch)) Hz" : "等待稳定声线")
                     LabeledContent("置信度",value:"\(Int(session.vocal.confidence*100))%")
                 }
-            }.navigationTitle("声音与光").toolbar { Button("完成") { console=false } }
+            }.modifier(StudioSurface()).navigationTitle("声音与光").toolbar { Button("完成") { console=false } }
         }.preferredColorScheme(.dark)
     }
     private var reportSheet:some View {
@@ -144,11 +144,28 @@ struct KaraokeView: View {
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
                     Text("这一段，听见自己").font(Atmosphere.title(26))
-                    Text(session.report).font(.body).lineSpacing(7).textSelection(.enabled)
-                    Button(session.analyzing ? "分析中" : "AI 评分解读与练习建议") { Task { await session.review(using:client) } }.disabled(session.analyzing || session.isSessionActive || session.evidence.isEmpty)
+                    Text(session.title).font(.subheadline).foregroundStyle(Atmosphere.muted)
+                    HStack(spacing:12) {
+                        scoreCard("声线稳定度",value:session.assessment.steadiness)
+                        scoreCard("电平余量",value:session.assessment.levelHeadroom)
+                    }
+                    HStack {
+                        Label("\(session.assessment.validSamples) 个有效采样",systemImage:"waveform.path")
+                        Spacer()
+                        Text("\(Int(session.assessment.measuredSeconds)) 秒").monospacedDigit()
+                    }.font(.caption).foregroundStyle(Atmosphere.muted)
+                    Text(session.evidence.isEmpty ? "开始一次演唱，让手机听到持续的声音，再回到这里查看练习参考。" : "这次练习的参考分来自手机收音。靠近麦克风、降低原唱音量，有助于观察自己的声线变化。")
+                        .font(.system(size:14)).lineSpacing(5).foregroundStyle(Atmosphere.muted)
+                    Button { Task { await session.review(using:client) } } label: {
+                        HStack { Image(systemName:"sparkles");Text(session.analyzing ? "正在整理练习建议" : "AI 解读这一段");Spacer();Image(systemName:"arrow.up.right") }
+                            .padding(18).background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:16))
+                    }.disabled(session.analyzing || session.isSessionActive || session.evidence.isEmpty)
+                    DisclosureGroup("测量依据与完整复盘") {
+                        Text(session.report).font(.system(size:14)).lineSpacing(6).textSelection(.enabled).padding(.top,12)
+                    }.font(.subheadline)
                     Text("发送内容为带时间戳的声线与电平指标。原始声音保留在本机音频链路中。").font(.footnote).foregroundStyle(.secondary)
                 }.padding(26)
-            }.navigationTitle("演唱复盘").toolbar { Button("完成") { showingReport=false } }
+            }.modifier(StudioSurface()).navigationTitle("演唱复盘").toolbar { Button("完成") { showingReport=false } }
         }.preferredColorScheme(.dark)
     }
     private var externalSheet: some View {
@@ -157,11 +174,11 @@ struct KaraokeView: View {
                 Section("网易云 / 外部播放") {
                     TextField("歌名（可选）",text:$songTitle).accessibilityIdentifier("external-title")
                     Text("1. 点击下方开始收音。\n2. 切到网易云音乐，选择歌曲播放并跟唱。\n3. 唱完返回，点击结束并复盘。")
-                    Text("音箱通过系统蓝牙连接，宝宝剑保持 App 内连接。手机麦克风持续收音，后台显示系统麦克风标记。")
+                    Text("音箱使用系统蓝牙，宝宝剑保持 App 内连接。返回舞台可查看歌词，并在「歌词与同步」中选择版本或对齐当前句。")
                     LabeledContent("选择播放设备") { AudioOutputPicker().frame(width:44,height:44) }
                 }
                 Section("评分范围") {
-                    Text("提供持续声线稳定度、收音电平参考分及 AI 练习建议。原唱与伴奏会进入麦克风，建议选伴奏版、降低音箱音量并靠近手机演唱。歌词可在网易云中查看。")
+                    Text("提供声线稳定度、电平参考及 AI 练习建议。选择伴奏版、降低音箱音量并靠近手机，有助于减少原唱对测量的影响。")
                 }
             }
             .safeAreaInset(edge:.bottom) {
@@ -174,10 +191,19 @@ struct KaraokeView: View {
                     .padding(.horizontal,20).padding(.vertical,12).background(.ultraThinMaterial)
                     .accessibilityIdentifier("external-start")
             }
-            .navigationTitle("跟着网易云唱").toolbar { Button("完成") { externalSetup=false } }
+            .modifier(StudioSurface()).navigationTitle("跟着网易云唱").toolbar { Button("完成") { externalSetup=false } }
         }.preferredColorScheme(.dark)
     }
     private var client:DirectorClient { let s=DirectorSettings.load();return .init(settings:s,key:DirectorKeychain.read(for:s.credentialID)) }
+    private func scoreCard(_ title:String,value:Int?)->some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text(title).font(.system(size:12)).foregroundStyle(Atmosphere.muted)
+            Text(value.map(String.init) ?? "待测").font(.system(size:value==nil ? 24 : 38,weight:.light,design:.rounded)).monospacedDigit()
+            Text(value==nil ? "等待有效收音" : "练习参考 / 100").font(.system(size:10)).foregroundStyle(Atmosphere.muted)
+        }.frame(maxWidth:.infinity,alignment:.leading).padding(18)
+            .background(.white.opacity(0.045),in:RoundedRectangle(cornerRadius:18))
+            .overlay(RoundedRectangle(cornerRadius:18).strokeBorder(.white.opacity(0.07)))
+    }
     private func clock(_ value:Double)->String { String(format:"%02d:%02d",Int(value)/60,Int(value)%60) }
 }
 
@@ -211,10 +237,10 @@ struct DirectorSettingsView: View {
                     Text(message).font(.footnote)
                 }
                 Section("AI 的工作方式") {
-                    Text("导入歌词后按需生成情绪分镜，播放阶段使用本地时间轴。演唱结束后，AI 根据测量指标整理练习建议。")
+                    Text("获取歌词后按需编排情绪与重点词，舞台按歌曲时间轴呈现。唱完后，AI 根据测量指标整理练习建议。")
                     Text("首次使用先填写接口。未配置时可使用本地编排和本机测量。")
                 }.font(.footnote)
-            }.navigationTitle("AI 导演").toolbar { Button("完成") { dismiss() } }
+            }.modifier(StudioSurface()).navigationTitle("AI 导演").toolbar { Button("完成") { dismiss() } }
         }.preferredColorScheme(.dark)
         .onAppear { key=DirectorKeychain.read(for:settings.credentialID) }
         .onChange(of:settings.baseURL) { _,_ in key=DirectorKeychain.read(for:settings.credentialID) }
