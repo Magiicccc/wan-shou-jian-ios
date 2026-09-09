@@ -55,6 +55,7 @@ final class KaraokeSession: ObservableObject {
     private var reverb: AVAudioUnitReverb?
     private var probe: VocalProbe?
     private let speech=SpokenLyricSync()
+    private var speechContextKey=""
     private var timer: Task<Void,Never>?
     private var generation = 0
     private var frames: [VocalFrame] = []
@@ -266,7 +267,13 @@ final class KaraokeSession: ObservableObject {
                     self.externalLyrics.accept(words:words)
                 }
             }
-            speech.state={ [weak self] text in Task { @MainActor in self?.status=text } }
+            speech.state={ [weak self] state in
+                Task { @MainActor [weak self] in
+                    guard let self,self.generation==token,self.wantsPlaying else { return }
+                    self.externalLyrics.receiveSpeechState(state)
+                }
+            }
+            speech.setContext(externalLyrics.cues);speechContextKey=""
             speech.start()
         }
         engine.inputNode.installTap(onBus:0,bufferSize:2048,format:format) { buffer,_ in
@@ -392,6 +399,10 @@ final class KaraokeSession: ObservableObject {
     }
 
     private func tick() {
+        if externalMusic {
+            let key="\(externalLyrics.track?.key ?? "")|\(externalLyrics.cues.count)"
+            if key != speechContextKey { speechContextKey=key;speech.setContext(externalLyrics.cues) }
+        }
         automaticDirection()
         let target: Double
         if externalMusic {

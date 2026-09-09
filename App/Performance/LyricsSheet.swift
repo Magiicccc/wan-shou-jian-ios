@@ -47,6 +47,10 @@ struct LyricsSheet: View {
                                 Text(time(lyrics.position())).monospacedDigit().font(.caption)
                             }
                             DisclosureGroup("同步诊断（可选）") {
+                            Text(lyrics.syncDetail).font(.caption).foregroundStyle(Atmosphere.muted)
+                            if !lyrics.heardPreview.isEmpty {
+                                Text("最近识别：\(lyrics.heardPreview)").font(.caption2).foregroundStyle(Atmosphere.muted)
+                            }
                             Button { aligning.toggle() } label: {
                                 HStack { Text("点选当前唱到的一句");Spacer();Image(systemName:aligning ? "chevron.up" : "chevron.down") }
                             }.accessibilityIdentifier("lyrics-align")
@@ -104,6 +108,8 @@ struct LyricsSheet: View {
                     if ProcessInfo.processInfo.arguments.contains("--preview") {
                         Button("载入原创歌词演示") { lyrics.loadPreview();aligning=true }
                             .accessibilityIdentifier("lyrics-preview")
+                        Button("查看同步超时演示") { lyrics.loadWaitingPreview();dismiss() }
+                            .accessibilityIdentifier("lyrics-waiting-preview")
                     }
                 }.padding(24)
             }.modifier(StudioSurface()).navigationTitle("歌词与同步")
@@ -129,10 +135,23 @@ struct ExternalLyricStage:View {
         VStack(spacing:10) {
             if !lyrics.cues.isEmpty,lyrics.hasPosition {
                 KineticLyricsView(cue:lyrics.currentCue,time:lyrics.position(),energy:energy,nextCue:lyrics.nextCue)
+            } else if !lyrics.cues.isEmpty,lyrics.syncNeedsAttention {
+                VStack(alignment:.leading,spacing:8) {
+                    Text("歌词阅读 · 定位后自动跟随").font(.system(size:11)).foregroundStyle(Atmosphere.muted)
+                    ScrollView {
+                        LazyVStack(alignment:.leading,spacing:14) {
+                            ForEach(lyrics.cues) { cue in
+                                Text(cue.text).font(Atmosphere.title(21)).foregroundStyle(Atmosphere.silver)
+                                    .frame(maxWidth:.infinity,alignment:.leading)
+                            }
+                        }
+                    }.accessibilityIdentifier("lyrics-reading-fallback")
+                    Text(lyrics.syncDetail).font(.system(size:11)).foregroundStyle(Atmosphere.muted).lineLimit(3)
+                }.frame(maxWidth:.infinity,maxHeight:.infinity)
             } else {
                 VStack(spacing:12) {
                     Text(lyrics.cues.isEmpty ? "等一句，与你共鸣" : "歌词已就位").font(Atmosphere.title(26))
-                    Text(lyrics.cues.isEmpty ? "正在识别曲目与歌词，也可搜索歌曲" : "正在聆听，自动寻找当前歌词位置")
+                    Text(lyrics.syncDetail)
                         .font(.system(size:12)).foregroundStyle(Atmosphere.muted)
                 }.frame(maxWidth:.infinity,maxHeight:.infinity)
             }

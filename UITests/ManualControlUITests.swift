@@ -187,6 +187,24 @@ final class ManualControlUITests: XCTestCase {
         app.buttons["stage-play"].tap()
     }
 
+    func testSyncTimeoutOffersReadableLyricsInsteadOfIndefiniteWaiting() {
+        let app=XCUIApplication()
+        app.launchArguments=["--preview"]
+        app.launch()
+        XCTAssertTrue(app.buttons["tab-3"].waitForExistence(timeout:10))
+        app.buttons["tab-3"].tap()
+        app.buttons["external-music"].tap()
+        app.buttons["external-start"].tap()
+        XCTAssertTrue(app.buttons["open-lyrics"].waitForExistence(timeout:5))
+        app.buttons["open-lyrics"].tap()
+        let demo=app.buttons["lyrics-waiting-preview"]
+        for _ in 0..<6 { if demo.isHittable { break };app.swipeUp() }
+        XCTAssertTrue(demo.isHittable);demo.tap()
+        XCTAssertTrue(app.scrollViews["lyrics-reading-fallback"].waitForExistence(timeout:5))
+        XCTAssertTrue(app.buttons["open-lyrics"].label.contains("自动重试"))
+        attach(app,name:"19-sync-timeout-readable")
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let scroll = app.scrollViews.firstMatch
         let primary = app.buttons["primary-control"]

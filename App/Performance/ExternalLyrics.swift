@@ -49,11 +49,12 @@ struct LyricClock {
     var duration=1.0
     var system=false
     var offset=0.0
+    var validFor=8.0
     func position(at now:Double) -> Double {
         guard now.isFinite else { return max(0,min(duration,anchor)) }
-        // System estimates expire after eight seconds without a fresh response.
+        // Player and audio anchors have separate bounded freshness windows.
         let delta=max(0,now-observed)
-        return max(0,min(duration,anchor + min(delta,system ? 8 : delta)*rate + offset))
+        return max(0,min(duration,anchor + min(delta,system ? validFor : delta)*rate + offset))
     }
     mutating func freeze(at now:Double) { anchor=position(at:now)-offset; observed=now; rate=0 }
 }
@@ -150,6 +151,8 @@ struct LyricsClient {
     @Published private(set) var plainText=""
     @Published private(set) var message="开始收音后尝试读取播放器；也可以搜索歌曲。"
     @Published private(set) var syncing="等待歌曲"
+    @Published private(set) var syncDetail="开始演唱后自动核对播放器与声音。"
+    @Published private(set) var heardPreview=""
     @Published private(set) var busy=false
     @Published private(set) var selectedID: Int?
     @Published var offset=0.0 { didSet { clock.offset=offset.isFinite ? min(10,max(-10,offset)) : 0 } }
@@ -164,6 +167,10 @@ struct LyricsClient {
     private var audioAligned=false
     private var lastPlayerTime = -Double.infinity
     private var lastHeardTime = -Double.infinity
+    private var waitingSince:Double?
+    private var speechStatus:LyricSpeechStatus = .starting
+    private var pendingMatch:(cueID:Int,observed:Double,received:Double)?
+    private let now:()->Double
     private let preview:Bool
     private let search: (String,String) async throws -> [LyricRecord]
     private let read: () async -> PlayerSnapshot?
@@ -171,8 +178,10 @@ struct LyricsClient {
     private let cacheURL:URL?
 
     init(preview:Bool=false, search:((String,String) async throws -> [LyricRecord])?=nil,
-         read:(() async -> PlayerSnapshot?)?=nil, cacheURL:URL?=nil) {
+         read:(() async -> PlayerSnapshot?)?=nil, cacheURL:URL?=nil,
+         now:@escaping ()->Double = { ProcessInfo.processInfo.systemUptime }) {
         self.preview=preview
+        self.now=now
         self.search=search ?? { try await LyricsClient().search(title:$0,artist:$1) }
         self.read=read ?? {
             await withCheckedContinuation { continuation in
@@ -186,31 +195,75 @@ struct LyricsClient {
            let data=try? Data(contentsOf:url), let saved=try? JSONDecoder().decode([LyricRecord].self,from:data) { cache=Array(saved.prefix(20)) }
     }
     deinit { poll?.cancel();lookup?.cancel() }
-    func position(at now:Double = ProcessInfo.processInfo.systemUptime) -> Double { clock.position(at:now) }
+    func position(at time:Double? = nil) -> Double { clock.position(at:time ?? now()) }
     var currentCue:LyricCue? { PerformanceScore.cue(at:position(),in:cues) }
     var nextCue:LyricCue? { cues.first { $0.start>position() } }
     var hasPosition:Bool {
-        manuallyAligned || (clock.system && ((!active && clock.rate==0) || ProcessInfo.processInfo.systemUptime-clock.observed<8))
+        manuallyAligned || (clock.system && ((!active && clock.rate==0) || now()-clock.observed<clock.validFor))
+    }
+    var syncNeedsAttention:Bool {
+        if case .unavailable = speechStatus { return !hasPosition }
+        return !hasPosition && waitingSince.map { now()-$0>=15 } == true
+    }
+    func receiveSpeechState(_ state:LyricSpeechStatus) {
+        speechStatus=state;refreshSyncState()
+    }
+    func refreshSyncState() {
+        if hasPosition {
+            waitingSince=nil
+            if manuallyAligned { return }
+            syncing=clock.rate==0 ? "播放器已暂停" : audioAligned ? "声音辅助同步 · 句级估计" : "播放器同步"
+            syncDetail=audioAligned ? "按已识别位置连续推进，下一句会自动校正。" : "跟随播放器的歌曲进度。"
+            return
+        }
+        if active,waitingSince==nil { waitingSince=now() }
+        if cues.isEmpty {
+            syncing=busy ? "正在获取歌词" : "等待歌曲信息"
+            syncDetail="播放器尚未提供可用歌词；可搜索当前歌曲或导入歌词。"
+        } else if case .unavailable(let reason)=speechStatus {
+            syncing="声音定位需要处理";syncDetail=reason
+        } else if syncNeedsAttention {
+            syncing="暂未定位 · 自动重试中"
+            syncDetail=speechStatus == .retrying ? "本机语音服务正在恢复；歌词可继续阅读。" :
+                heardPreview.isEmpty ? "尚未收到可匹配的人声。让手机靠近播放设备，确认麦克风能收到音乐。" :
+                "已收到声音，仍在核对歌词版本和句子；匹配成功后自动跟随。"
+        } else {
+            syncing="正在自动定位"
+            syncDetail=speechStatus == .retrying ? "正在恢复本机声音识别。" : "正在核对播放器进度与当前歌词。"
+        }
     }
     func accept(words:[HeardWord]) {
-        let now=ProcessInfo.processInfo.systemUptime
+        let now=now()
+        heardPreview=String(words.suffix(10).map(\.text).joined().suffix(48))
         guard active,!manuallyAligned,now-lastPlayerTime>4,!cues.isEmpty,
               let match=LyricAlignment.match(words:words,cues:cues,near:hasPosition ? position() : nil,now:now),
               match.observed>lastHeardTime else { return }
+        if match.provisional {
+            guard let pending=pendingMatch,pending.cueID==match.cue.id,
+                  abs(pending.observed-match.observed)<1,now-pending.received<5 else {
+                pendingMatch=(match.cue.id,match.observed,now);return
+            }
+            guard now-pending.received>=0.3 else { return }
+        }
+        pendingMatch=nil
         lastHeardTime=match.observed;audioAligned=true
-        clock = .init(anchor:match.cue.start,observed:match.observed,rate:1,duration:track?.duration ?? match.cue.end,system:true)
-        syncing="声音辅助同步 · 句级估计"
+        clock = .init(anchor:match.cue.start,observed:match.observed,rate:1,duration:track?.duration ?? match.cue.end,system:true,offset:offset,validFor:30)
+        refreshSyncState()
     }
 
     func reset() {
         stop();epoch += 1;lookup?.cancel();lookup=nil;track=nil;cues=[];results=[];plainText="";busy=false
         lastPlayerKey="";selectedID=nil;manuallyAligned=false;clock=LyricClock();offset=0
         audioAligned=false;lastPlayerTime = -.infinity;lastHeardTime = -.infinity
+        pendingMatch=nil;waitingSince=nil;speechStatus = .starting;heardPreview=""
+        syncDetail="开始演唱后自动核对播放器与声音。"
         syncing="等待歌曲";message="开始收音后尝试读取播放器；也可以搜索歌曲。"
     }
     func start() {
         guard !active else { return };active=true;pollEpoch += 1
-        if manuallyAligned { clock.anchor=position()-clock.offset;clock.observed=ProcessInfo.processInfo.systemUptime;clock.rate=1 }
+        waitingSince=now();pendingMatch=nil
+        if manuallyAligned { clock.anchor=position()-clock.offset;clock.observed=now();clock.rate=1 }
+        else if clock.rate==0 { clock=LyricClock(duration:track?.duration ?? 1);audioAligned=false;lastPlayerTime = -.infinity }
         guard !preview else { return }
         let token=pollEpoch
         poll=Task { [weak self] in
@@ -219,16 +272,13 @@ struct LyricsClient {
                 let snapshot=await reader()
                 guard let self,self.active,self.pollEpoch==token,!Task.isCancelled else { return }
                 if let snapshot { self.accept(snapshot) }
-                else if !self.manuallyAligned {
-                    self.syncing=self.hasPosition ? (self.audioAligned ? "声音辅助同步 · 句级估计" : "播放器同步") : "正在重新同步"
-                    self.message=self.cues.isEmpty ? "正在获取曲目信息；也可搜索歌名定位版本。" : "正在聆听音乐，自动核对歌词位置。"
-                }
+                self.refreshSyncState()
                 do { try await Task.sleep(nanoseconds:1_000_000_000) } catch { return }
             }
         }
     }
     func stop() {
-        active=false;pollEpoch += 1;poll?.cancel();poll=nil;clock.freeze(at:ProcessInfo.processInfo.systemUptime)
+        active=false;pollEpoch += 1;poll?.cancel();poll=nil;clock.freeze(at:now());pendingMatch=nil
     }
     func accept(_ snapshot:PlayerSnapshot) {
         let changed=lastPlayerKey != snapshot.track.key
@@ -239,6 +289,7 @@ struct LyricsClient {
             if !preserve {
                 cues=[];plainText="";selectedID=nil;manuallyAligned=false;offset=0
                 audioAligned=false;lastHeardTime = -.infinity;lastPlayerTime = -.infinity
+                pendingMatch=nil;waitingSince=now();heardPreview=""
                 clock=LyricClock(duration:snapshot.track.duration)
                 find(title:snapshot.track.title,artist:snapshot.track.artist,automatic:snapshot.track)
             }
@@ -246,7 +297,7 @@ struct LyricsClient {
         guard !manuallyAligned,track?.sameRecording(as:snapshot.track)==true,
               let elapsed=snapshot.elapsed,let rate=snapshot.rate else { return }
         clock = .init(anchor:elapsed,observed:snapshot.observed,rate:rate,duration:snapshot.track.duration,system:true,offset:offset)
-        audioAligned=false;lastPlayerTime=ProcessInfo.processInfo.systemUptime
+        audioAligned=false;lastPlayerTime=now();pendingMatch=nil;waitingSince=nil
         syncing=rate==0 ? "播放器已暂停" : "播放器同步 · 实验"
     }
     func find(title:String,artist:String="",automatic:ExternalTrack?=nil) {
@@ -287,7 +338,11 @@ struct LyricsClient {
         track=record.track;selectedID=record.id;plainText=String((record.plainLyrics ?? "").prefix(100_000))
         cues=(try? PerformanceScore.parseYRC(record.wordLyrics ?? "",duration:record.duration)) ??
             (try? PerformanceScore.parseLRC(record.syncedLyrics ?? "",duration:record.duration)) ?? []
-        if !keep { clock=LyricClock(duration:record.duration);offset=0;manuallyAligned=false;audioAligned=false;lastHeardTime = -.infinity;syncing="正在自动定位" }
+        if !keep {
+            clock=LyricClock(duration:record.duration);offset=0;manuallyAligned=false;audioAligned=false
+            lastHeardTime = -.infinity;lastPlayerTime = -.infinity;pendingMatch=nil;waitingSince=now();heardPreview=""
+            syncing="正在自动定位"
+        }
         message=cues.isEmpty ? "已找到曲目，正在等待可用的时间轴歌词。" : "\(cues.contains(where:{$0.words != nil}) ? "逐字歌词" : "句级歌词") · \(record.sourceName) · 自动定位"
         cache.removeAll { $0.id==record.id };cache.insert(record,at:0);cache=Array(cache.prefix(20))
         if let url=cacheURL,let data=try? JSONEncoder().encode(cache),data.count<=2_000_000 { try? data.write(to:url,options:.atomic) }
@@ -295,12 +350,13 @@ struct LyricsClient {
     func align(to cue:LyricCue) {
         guard cues.contains(cue) else { return }
         manuallyAligned=true;offset=0
-        clock = .init(anchor:cue.start,observed:ProcessInfo.processInfo.systemUptime,rate:active ? 1 : 0,duration:track?.duration ?? cue.end)
+        clock = .init(anchor:cue.start,observed:now(),rate:active ? 1 : 0,duration:track?.duration ?? cue.end)
         syncing="手动对齐";message="跟随本机时间轴。网易云跳转或换歌后，可再次点选当前句。"
     }
     func followPlayer() {
-        manuallyAligned=false;audioAligned=false;lastPlayerKey="";lastHeardTime = -.infinity
-        clock=LyricClock(duration:track?.duration ?? 1);syncing="正在重新同步"
+        manuallyAligned=false;audioAligned=false;lastPlayerKey="";lastHeardTime = -.infinity;lastPlayerTime = -.infinity
+        pendingMatch=nil;waitingSince=now()
+        clock=LyricClock(duration:track?.duration ?? 1);refreshSyncState()
     }
     func apply(_ plan:PerformanceScore.Plan) throws { cues=try PerformanceScore.apply(plan,to:cues) }
     func importLRC(_ text:String,title:String) throws {
@@ -315,5 +371,9 @@ struct LyricsClient {
         let lrc=PerformanceScore.demo.map { String(format:"[%02d:%05.2f]%@",Int($0.start)/60,$0.start.truncatingRemainder(dividingBy:60),$0.text) }.joined(separator:"\n")
         choose(.init(id:-1,trackName:PerformanceScore.demoTitle,artistName:"原创演示",albumName:"私人舞台",duration:48,syncedLyrics:lrc))
         if let first=cues.first { align(to:first) }
+    }
+    func loadWaitingPreview() {
+        guard preview else { return }
+        loadPreview();followPlayer();waitingSince=now()-16;refreshSyncState()
     }
 }
